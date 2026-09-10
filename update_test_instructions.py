@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Apply certification test instructions to yts_automation.py."""
+"""Apply certification test instructions to yts_automation.py safely."""
 from pathlib import Path
 import json
-import pprint
 import re
 
 ROOT = Path(__file__).resolve().parent
@@ -18,15 +17,21 @@ def main():
         r"(?=\n# ============================================\n# Runtime YTS lifecycle)",
         re.S,
     )
+
+    # json.dumps produces a valid Python literal with escaped newlines/quotes.
+    # Using pprint here can emit strings in a form that is fragile when the
+    # source instruction text contains apostrophes or markdown characters.
     replacement = (
         "# Detailed test instructions sourced from the certification instruction table.\n"
         "TEST_INSTRUCTIONS = "
-        + pprint.pformat(instructions, width=100, sort_dicts=False)
+        + json.dumps(instructions, ensure_ascii=False, indent=4)
         + "\n\n"
     )
-    updated, count = pattern.subn(replacement, source, count=1)
+
+    updated, count = pattern.subn(lambda _: replacement, source, count=1)
     if count != 1:
         raise RuntimeError("Could not locate the TEST_INSTRUCTIONS block in yts_automation.py")
+
     updated = updated.replace("--test-version=20250415", "--test-version=20250721")
     TARGET.write_text(updated, encoding="utf-8")
     print(f"Updated {len(instructions)} test instructions and aligned test-version to 20250721.")
