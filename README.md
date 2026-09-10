@@ -1,16 +1,24 @@
-# YTS Automation Web Interface — Ubuntu
+# YTS Automation Web Interface
 
 Flask web interface for running YouTube Certification/YTS tests against Android/Android TV devices connected through ADB.
 
-## Supported platform
+## Supported platforms
+- Windows
+- Ubuntu/Linux
+- WSL2
 
-This project is intended for **Ubuntu/Linux only**.
-
-Windows/PowerShell launch scripts are intentionally not included.
+The app uses the native ADB client of the environment where it runs. WSL does not attempt to execute Windows `adb.exe`.
 
 ## Requirements
 
-Install these system packages if they are not already available:
+### Windows
+Install Python 3, Node.js/npm and Android SDK Platform Tools (`adb`) and ensure they are on `PATH`.
+
+```powershell
+start_app.bat
+```
+
+### Ubuntu/Linux/WSL
 
 ```bash
 sudo apt update
@@ -26,111 +34,78 @@ npm --version
 adb version
 ```
 
-## First run
-
-From the project directory:
+Start:
 
 ```bash
 chmod +x start_app.sh
 ./start_app.sh
 ```
 
-The launcher automatically:
+Open `http://127.0.0.1:5000`.
 
-- checks Python, Node.js, npm and ADB
-- creates `.venv` when required
-- installs Python dependencies
-- makes the bundled YTS executable
-- checks the YTS CLI
-- displays connected ADB devices
-- starts the web application
+## ADB configuration
 
-Open:
-
-```text
-http://127.0.0.1:5000
-```
-
-## Manual run
+The application automatically selects a working native ADB client. Override it when required:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python app.py
+export ADB_PATH=/path/to/adb
 ```
 
-## ADB
-
-Check connected devices:
+For a network-connected DUT:
 
 ```bash
-adb devices
+export ADB_DEVICE=192.168.1.7:5555
+./start_app.sh
 ```
 
-The device should appear as:
+The application runs `adb connect` in the current OS environment. Windows and WSL therefore do not need to share an ADB server.
 
-```text
-SERIAL    device
-```
+## Runtime YTS CLI
 
-If it shows `unauthorized`, authorize USB debugging on the Android device.
+YTS CLI is intentionally **not bundled** with this repository.
 
-## YTS CLI
+At startup the app downloads `yts_server.zip` from `YTS_DOWNLOAD_URL` (default: `http://yts.devicecertification.youtube/yts_server.zip`), extracts it into a private temporary directory, and uses that copy for the session.
 
-The bundled executable is:
+On shutdown, active YTS processes are terminated and the temporary runtime directory is removed.
 
-```text
-google3/video/youtube/testing/ytlr_cert/yts_server/yts
-```
-
-Check it:
+Optional settings:
 
 ```bash
-./google3/video/youtube/testing/ytlr_cert/yts_server/yts --help
+export YTS_DOWNLOAD_URL='http://yts.devicecertification.youtube/yts_server.zip'
+export YTS_DOWNLOAD_TIMEOUT=120
 ```
 
-If necessary:
+## Test execution
 
-```bash
-chmod +x google3/video/youtube/testing/ytlr_cert/yts_server/yts
-```
+The web UI loads the test definitions from `YTS_TEST_COMMANDS` in `yts_automation.py`. Device discovery uses ADB and `yts discover`, then the selected test command is launched with the discovered YTS short ID. Output is streamed to the UI and results are stored in the local SQLite database under `data/`.
 
 ## Configuration
-
-Optional environment variables:
 
 ```bash
 export HOST=127.0.0.1
 export PORT=5000
+export ADB_PATH=/path/to/adb
+export ADB_DEVICE=192.168.1.7:5555
 export FLASK_SECRET_KEY='replace-with-a-long-random-value'
 export ALLOWED_ORIGINS='http://127.0.0.1:5000,http://localhost:5000'
+export LOG_LEVEL=INFO
+export MAX_COMPLETED_SESSIONS=200
 ```
-
-For a workstation used by multiple machines on the same LAN, explicitly set `HOST=0.0.0.0` and restrict access with your firewall.
-
-## Runtime data
-
-Runtime databases/logs belong under:
-
-```text
-data/
-```
-
-They are excluded from Git.
 
 ## Project layout
 
 ```text
-YT_WebApp/
+YT_Automation_WebApp_Based/
 ├── app.py
 ├── yts_automation.py
+├── adb_platform.py
 ├── requirements.txt
 ├── start_app.sh
+├── start_app.bat
 ├── .gitignore
 ├── README.md
 ├── data/
-├── google3/
+│   └── .gitkeep
 ├── static/
 │   ├── css/
 │   └── js/
@@ -139,84 +114,31 @@ YT_WebApp/
 
 ## Troubleshooting
 
-### `ModuleNotFoundError: No module named 'flask'`
+### WSL ADB fails
 
-Activate the virtual environment:
+```bash
+sudo apt install -y adb
+/usr/bin/adb version
+/usr/bin/adb connect 192.168.1.7:5555
+/usr/bin/adb devices
+```
+
+If `/usr/local/bin/adb` is a broken Windows wrapper, the application prefers a working native `/usr/bin/adb`.
+
+### Python dependencies missing
 
 ```bash
 source .venv/bin/activate
-```
-
-Then:
-
-```bash
 python -m pip install -r requirements.txt
 ```
 
-### `python3 -m venv` fails
-
-Install:
+### Port is already in use
 
 ```bash
-sudo apt install -y python3-venv python3-full
-```
-
-Then recreate:
-
-```bash
-rm -rf .venv
-python3 -m venv .venv
-```
-
-### YTS permission denied
-
-```bash
-chmod +x google3/video/youtube/testing/ytlr_cert/yts_server/yts
-```
-
-### ADB device is missing
-
-```bash
-adb kill-server
-adb start-server
-adb devices
-```
-
-Then reconnect/authorize the device.
-
-## Important
-
-Do not commit:
-
-- `.venv/`
-- runtime databases
-- logs
-- local credentials
-- secrets
-
-The YTS test definitions and bundled YTS files remain version controlled.
-
-## Runtime YTS CLI
-
-The YTS CLI is intentionally not bundled with this application. On startup, the application downloads `yts_server.zip` from `YTS_DOWNLOAD_URL` (default: `http://yts.devicecertification.youtube/yts_server.zip`), extracts it into a private temporary directory, and uses that copy for all YTS commands during the session.
-
-The temporary YTS directory is removed when the application exits. Set `YTS_DOWNLOAD_URL` to a different package URL if required.
-
-## Cross-platform ADB
-
-The application uses the native ADB client of the environment where it runs:
-
-- Windows: `adb.exe` from PATH or `ADB_PATH`.
-- Linux/WSL: Linux `adb` from PATH or `ADB_PATH`.
-- WSL never attempts to execute a Windows `.exe` as its ADB client.
-
-For a network-connected DUT, you can set:
-
-```bash
-export ADB_DEVICE=192.168.1.7:5555
+export PORT=5001
 ./start_app.sh
 ```
 
-Use your own DUT address in place of the example. The application runs `adb connect` in the current OS environment, so Windows and WSL can each maintain their own ADB client/server without sharing a Windows ADB server.
+## Git hygiene
 
-On native Windows, run `start_app.bat` from Command Prompt or PowerShell.
+Do not commit `.venv/`, databases, logs, `.env`/secrets, downloaded YTS runtime files, or the old bundled `google3/` tree.

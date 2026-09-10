@@ -10,6 +10,7 @@ data/*
 
 # Logs
 *.log
+*.bak
 
 # OS/editor
 .DS_Store
@@ -23,9 +24,8 @@ data/*
 *.key
 *.secret
 
-# Bundled YTS files containing embedded OAuth credentials
-google3/video/youtube/testing/ytlr_cert/yts_server/remote_cli/remote_cli_bin.cjs
-google3/video/youtube/testing/ytlr_cert/yts_server/yts_bin.cjs
-
 # Runtime YTS downloads (temporary only)
 yts_automation_*
+yts_server/
+yts_server.zip
+google3/
