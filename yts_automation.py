@@ -2,20 +2,20 @@
 """
 YTS Automation Script - Linux-only web integration.
 """
+import atexit
+import datetime
+import logging
 import os
 import re
-import datetime
-import time
 import shutil
-import subprocess
-import tempfile
-import zipfile
-import urllib.request
-import atexit
 import signal
 import sqlite3
+import subprocess
+import tempfile
 import threading
-import logging
+import time
+import urllib.request
+import zipfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Optional
@@ -23,23 +23,27 @@ from typing import Optional
 # ============================================
 # Linux-native ADB helpers
 # ============================================
+
 def find_adb() -> Optional[str]:
     configured = os.environ.get("ADB_PATH", "").strip()
-    candidates = [configured] if configured else []
-    # Native Linux ADB paths; do not execute Windows binaries.
+    candidates = []
+    if configured:
+        candidates.append(configured)
     candidates.extend(["/usr/bin/adb", "/usr/local/bin/adb"])
     which = shutil.which("adb")
     if which:
         candidates.append(which)
+
     seen = set()
     for candidate in candidates:
         if not candidate or candidate in seen or not os.path.isfile(candidate):
             continue
         seen.add(candidate)
         try:
-            result = subprocess.run([candidate, "version"], stdout=subprocess.PIPE,
-                                    stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                    errors="replace", timeout=10, check=False)
+            result = subprocess.run(
+                [candidate, "version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace", timeout=10, check=False
+            )
             if result.returncode == 0 and "Android Debug Bridge" in result.stdout:
                 return candidate
         except (OSError, subprocess.SubprocessError):
@@ -58,9 +62,10 @@ def ensure_network_device(device: Optional[str]):
     if not device:
         return True, ""
     try:
-        result = subprocess.run(adb_command("connect", device), stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                errors="replace", timeout=15, check=False)
+        result = subprocess.run(
+            adb_command("connect", device), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", timeout=15, check=False
+        )
         output = (result.stdout or "").strip()
         low = output.lower()
         return result.returncode == 0 and ("connected to" in low or "already connected" in low), output
@@ -74,23 +79,22 @@ def get_adb_info():
         return {"available": False, "path": None, "platform": "Linux", "version": None,
                 "error": "No working native Linux ADB client found"}
     try:
-        result = subprocess.run([adb, "version"], stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT, text=True, encoding="utf-8",
-                                errors="replace", timeout=10, check=False)
+        result = subprocess.run(
+            [adb, "version"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace", timeout=10, check=False
+        )
         output = result.stdout or ""
         return {"available": result.returncode == 0, "path": adb, "platform": "Linux",
                 "version": output.splitlines()[0] if output else None,
                 "error": None if result.returncode == 0 else output.strip()}
     except (OSError, subprocess.SubprocessError) as exc:
-        return {"available": False, "path": adb, "platform": "Linux", "version": None,
-                "error": str(exc)}
+        return {"available": False, "path": adb, "platform": "Linux", "version": None, "error": str(exc)}
 
 
 # ============================================
 # Constants and runtime YTS
 # ============================================
 CACHE_TIMEOUT = 60
-MAX_RETRIES = 2
 TEST_TIMEOUT = 300
 MAX_LOG_SIZE_MB = 10
 DISCOVERY_TIMEOUT = 20
@@ -151,8 +155,10 @@ def init_db():
 def save_result_db(test_name, status, device_id=None, short_id=None, duration=None, logs=None):
     try:
         with get_db() as conn:
-            conn.execute('INSERT INTO test_results (test_name, device_id, short_id, status, duration, logs) VALUES (?, ?, ?, ?, ?, ?)',
-                         (test_name, device_id, short_id, status, duration, logs))
+            conn.execute(
+                'INSERT INTO test_results (test_name, device_id, short_id, status, duration, logs) VALUES (?, ?, ?, ?, ?, ?)',
+                (test_name, device_id, short_id, status, duration, logs)
+            )
             row = conn.execute('SELECT total_runs, passes, failures, avg_duration FROM test_metrics WHERE test_name = ?',
                                (test_name,)).fetchone()
             if row:
@@ -163,7 +169,7 @@ def save_result_db(test_name, status, device_id=None, short_id=None, duration=No
                 conn.execute('UPDATE test_metrics SET total_runs=?, passes=?, failures=?, avg_duration=? WHERE test_name=?',
                              (total, passes, failures, average, test_name))
             else:
-                conn.execute('INSERT INTO test_metrics (test_name,total_runs,passes,failures,avg_duration) VALUES (?,1,?,?,?)',
+                conn.execute('INSERT INTO test_metrics(test_name,total_runs,passes,failures,avg_duration) VALUES (?,1,?,?,?)',
                              (test_name, 1 if status == 'PASSED' else 0, 1 if status == 'FAILED' else 0, duration or 0))
             conn.commit()
     except Exception:
@@ -177,12 +183,14 @@ def get_results_db(limit=100):
 
 def get_stats_db():
     with get_db() as conn:
-        return [dict(row) for row in conn.execute('''SELECT test_name,total_runs,passes,failures,
-            ROUND(avg_duration,2) AS avg_duration, ROUND(passes*100.0/total_runs,1) AS pass_rate
-            FROM test_metrics ORDER BY total_runs DESC''').fetchall()]
+        return [dict(row) for row in conn.execute('''
+            SELECT test_name,total_runs,passes,failures,ROUND(avg_duration,2) AS avg_duration,
+                   ROUND(passes*100.0/total_runs,1) AS pass_rate
+            FROM test_metrics ORDER BY total_runs DESC
+        ''').fetchall()]
 
 
-def rotate_log_file(log_file=None, max_size_mb=10):
+def rotate_log_file(log_file=None, max_size_mb=MAX_LOG_SIZE_MB):
     path = Path(log_file) if log_file else LOG_PATH
     if path.exists() and path.stat().st_size > max_size_mb * 1024 * 1024:
         backup = path.with_name(f"{path.name}.{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.bak")
@@ -195,7 +203,7 @@ def rotate_log_file(log_file=None, max_size_mb=10):
 
 
 # ============================================
-# Test configuration — original commands preserved
+# Test configuration
 # ============================================
 YTS_TEST_COMMANDS = {
     "LiveDRM": 'yts launch {shortId} https://www.youtube.com/tv?list=OLAK5uy_mKAu6VNK3gMSq_L8fU_C6myQnuuuIzvWY',
@@ -241,8 +249,10 @@ YTS_MANUAL_TESTS = {
     "LiveDRM", "In-app HDR HLG", "In-app HDR PQ", "In-app Visual Audio / Video Sync",
     "DRM Purchased Movie", "Multi-App Performance", "System Overlay", "YouTube Music Endurance", "Live streaming"
 }
-YTS_TEST_WAIT_SECONDS = {"LiveDRM": 1080, "In-app HDR HLG": 300, "In-app HDR PQ": 300,
-                          "YouTube Music Endurance": 310, "Live streaming": 43200}
+YTS_TEST_WAIT_SECONDS = {
+    "LiveDRM": 1080, "In-app HDR HLG": 300, "In-app HDR PQ": 300,
+    "YouTube Music Endurance": 310, "Live streaming": 43200
+}
 TEST_CATEGORIES = {
     "Media Tests": ["Adaptive Bit Rate", "Adaptive Bit Rate - DRM", "Resizing"],
     "Aspect Ratio Tests": ["21:9 Aspect Ratio", "4:3 Aspect Ratio", "16:9 Aspect Ratio", "17:30 Aspect Ratio"],
@@ -257,7 +267,7 @@ TEST_CATEGORIES = {
     "Time Tests": ["Current Time"]
 }
 
-# Detailed certification instructions are loaded from test_instructions.json.
+# Detailed test instructions are stored in test_instructions.json.
 TEST_INSTRUCTIONS = {}
 _INSTRUCTION_FILE = BASE_DIR / "test_instructions.json"
 if _INSTRUCTION_FILE.exists():
@@ -268,7 +278,6 @@ if _INSTRUCTION_FILE.exists():
         logger.exception("Failed to load test instructions from %s", _INSTRUCTION_FILE)
 for _name in YTS_TEST_COMMANDS:
     TEST_INSTRUCTIONS.setdefault(_name, "Follow the on-screen YTS instructions for this test and verify the documented pass/fail criteria.")
-
 
 # ============================================
 # Runtime YTS lifecycle
@@ -287,10 +296,7 @@ def _safe_extract_zip(zip_path: Path, extract_dir: Path):
 def _locate_yts(root: Path) -> Optional[Path]:
     for candidate in root.rglob("yts"):
         if candidate.is_file():
-            try:
-                candidate.chmod(candidate.stat().st_mode | 0o111)
-            except OSError:
-                pass
+            candidate.chmod(candidate.stat().st_mode | 0o111)
             return candidate
     for candidate in root.rglob("yts.js"):
         if candidate.is_file():
@@ -325,9 +331,7 @@ def prepare_yts() -> str:
 
 def _yts_command(*args: str) -> list[str]:
     launcher = prepare_yts()
-    if launcher.endswith(".js"):
-        return ["node", launcher, *args]
-    return [launcher, *args]
+    return (["node", launcher, *args] if launcher.endswith(".js") else [launcher, *args])
 
 
 def _run_command(command, timeout=TEST_TIMEOUT, log_callback=None):
@@ -337,31 +341,41 @@ def _run_command(command, timeout=TEST_TIMEOUT, log_callback=None):
         env["PATH"] = f"{Path(adb).parent}:{env.get('PATH', '')}"
         env["ADB_PATH"] = adb
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                               encoding="utf-8", errors="replace", bufsize=1, env=env)
+                               encoding="utf-8", errors="replace", bufsize=1, env=env, start_new_session=True)
     with _yts_processes_lock:
         _yts_processes.add(process)
     lines = []
-    start = time.time()
+    started = time.monotonic()
     try:
         while True:
-            line = process.stdout.readline() if process.stdout else ""
-            if line:
-                line = line.rstrip("\n")
-                lines.append(line)
-                if log_callback:
-                    log_callback(line)
-            elif process.poll() is not None:
+            if process.stdout is not None:
+                import select
+                ready, _, _ = select.select([process.stdout], [], [], 0.25)
+                if ready:
+                    line = process.stdout.readline()
+                    if line:
+                        line = line.rstrip("\r\n")
+                        lines.append(line)
+                        if log_callback:
+                            log_callback(line)
+                        continue
+            if process.poll() is not None:
                 break
-            elif time.time() - start > timeout:
-                process.terminate()
+            if time.monotonic() - started >= timeout:
                 try:
-                    process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    process.kill()
-                if log_callback:
-                    log_callback(f"ERROR: Command timed out after {timeout} seconds")
+                    os.killpg(process.pid, signal.SIGTERM)
+                except (OSError, ProcessLookupError):
+                    process.terminate()
                 break
-        return process.wait(timeout=10), lines
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (OSError, ProcessLookupError):
+                process.kill()
+            process.wait(timeout=5)
+        return process.returncode, lines
     finally:
         with _yts_processes_lock:
             _yts_processes.discard(process)
@@ -374,9 +388,12 @@ def cleanup_yts():
     for process in processes:
         try:
             if process.poll() is None:
-                process.terminate()
+                os.killpg(process.pid, signal.SIGTERM)
         except Exception:
-            pass
+            try:
+                process.terminate()
+            except Exception:
+                pass
     for process in processes:
         try:
             process.wait(timeout=5)
@@ -391,7 +408,6 @@ def cleanup_yts():
     _yts_script_path = None
 
 atexit.register(cleanup_yts)
-
 
 # ============================================
 # ADB / Node / YTS operations
@@ -413,7 +429,7 @@ def check_adb_devices():
 
 
 def discover_yts_devices():
-    """Run yts discover, capture useful output, then stop the MQTT-hanging process safely."""
+    """Run yts discover and stop it after useful device mappings are captured."""
     command = _yts_command("discover")
     env = os.environ.copy()
     adb = find_adb()
@@ -425,12 +441,18 @@ def discover_yts_devices():
                                text=True, encoding="utf-8", errors="replace", bufsize=1,
                                env=env, start_new_session=True)
     output_lines: list[str] = []
+    discovered: dict[str, str] = {}
     start = time.monotonic()
     mqtt_seen = False
+
+    def parse_line(line: str):
+        match = re.search(r"\(([^()\s]+)\).*?\(adb:\s*([^\s)]+)\)", line, re.IGNORECASE)
+        if match:
+            discovered[match.group(2)] = match.group(1)
+
     try:
         while True:
             if process.stdout is not None:
-                # Use a small timed reader via select on Linux to avoid blocking forever.
                 import select
                 ready, _, _ = select.select([process.stdout], [], [], 0.25)
                 if ready:
@@ -438,43 +460,53 @@ def discover_yts_devices():
                     if line:
                         text = line.rstrip("\r\n")
                         output_lines.append(text)
-                        if "mqtt://localhost:1883" in text.lower() or "failed to resolve uri" in text.lower():
+                        parse_line(text)
+                        low = text.lower()
+                        if "mqtt://localhost:1883" in low or "failed to resolve uri" in low:
                             mqtt_seen = True
-                        # Once discovery lines have arrived and MQTT is the only remaining issue,
-                        # stop immediately instead of making the UI wait 20 seconds.
-                        if mqtt_seen and any(re.search(r"\([^()\s]+\).*?\(adb:\s*[^\s)]+\)", x, re.I) for x in output_lines):
+                        # Once YTS has produced discovery mappings, do not wait for the
+                        # optional MQTT service that otherwise keeps yts alive.
+                        if discovered and mqtt_seen:
                             break
                         continue
             if process.poll() is not None:
                 break
             if time.monotonic() - start >= DISCOVERY_TIMEOUT:
-                logger.info("YTS discover timed out after %ss; using captured output", DISCOVERY_TIMEOUT)
+                logger.warning("YTS discover timed out after %ss; using captured mappings", DISCOVERY_TIMEOUT)
                 break
     finally:
         if process.poll() is None:
             try:
                 os.killpg(process.pid, signal.SIGTERM)
+            except (OSError, ProcessLookupError):
+                try:
+                    process.terminate()
+                except OSError:
+                    pass
+            try:
                 process.wait(timeout=3)
-            except Exception:
+            except subprocess.TimeoutExpired:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
-                except Exception:
-                    pass
+                except (OSError, ProcessLookupError):
+                    try:
+                        process.kill()
+                    except OSError:
+                        pass
         if process.stdout is not None:
             try:
                 remainder = process.stdout.read()
+                if isinstance(remainder, bytes):
+                    remainder = remainder.decode("utf-8", errors="replace")
                 if remainder:
-                    output_lines.extend(remainder.splitlines())
+                    for text in remainder.splitlines():
+                        output_lines.append(text)
+                        parse_line(text)
             except Exception:
                 pass
 
-    mapping = {}
-    for line in output_lines:
-        match = re.search(r"\(([^()\s]+)\).*?\(adb:\s*([^\s)]+)\)", line, re.IGNORECASE)
-        if match:
-            mapping[match.group(2)] = match.group(1)
-    logger.info("YTS discovery mapping: %s", mapping)
-    return mapping
+    logger.info("YTS discovery mapping: %s", discovered)
+    return discovered
 
 
 def check_node():
@@ -505,9 +537,8 @@ def get_device_details_cached(device_id):
     details = {}
     for name, prop in keys.items():
         try:
-            result = subprocess.run(adb_command("-s", device_id, "shell", "getprop", prop),
-                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
-                                    timeout=10, check=False)
+            result = subprocess.run(adb_command("-s", device_id, "shell", "getprop", prop), stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL, text=True, timeout=10, check=False)
             details[name] = result.stdout.strip() or "Unknown"
         except Exception:
             details[name] = "Unknown"
