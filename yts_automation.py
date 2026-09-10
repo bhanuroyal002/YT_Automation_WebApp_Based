@@ -29,6 +29,8 @@ def find_adb() -> Optional[str]:
     candidates = []
     if configured:
         candidates.append(configured)
+    # Prefer the distro-native ADB binary. A broken wrapper in /usr/local/bin
+    # must not shadow a working /usr/bin/adb on Linux systems.
     candidates.extend(["/usr/bin/adb", "/usr/local/bin/adb"])
     which = shutil.which("adb")
     if which:
@@ -68,7 +70,8 @@ def ensure_network_device(device: Optional[str]):
         )
         output = (result.stdout or "").strip()
         low = output.lower()
-        return result.returncode == 0 and ("connected to" in low or "already connected" in low), output
+        success = result.returncode == 0 and ("connected to" in low or "already connected" in low)
+        return success, output
     except (OSError, subprocess.SubprocessError) as exc:
         return False, str(exc)
 
@@ -98,6 +101,7 @@ CACHE_TIMEOUT = 60
 MAX_RETRIES = 2
 TEST_TIMEOUT = 300
 MAX_LOG_SIZE_MB = 10
+DISCOVERY_TIMEOUT = 20
 _device_cache = {}
 _cache_timestamps = {}
 YTS_DOWNLOAD_URL = os.environ.get("YTS_DOWNLOAD_URL", "http://yts.devicecertification.youtube/yts_server.zip")
@@ -217,35 +221,35 @@ def rotate_log_file(log_file=None, max_size_mb=10):
 # ============================================
 YTS_TEST_COMMANDS = {
     "LiveDRM": 'yts launch {shortId} https://www.youtube.com/tv?list=OLAK5uy_mKAu6VNK3gMSq_L8fU_C6myQnuuuIzvWY',
-    "12 Hour Endurance": 'yts test {shortId} --test-version=20250415 "In-app Video Endurance"',
+    "12 Hour Endurance": 'yts test {shortId} --test-version=20250721 "In-app Video Endurance"',
     "YouTube Music Endurance": 'yts launch {shortId} https://www.youtube.com/tv#/watch?v=13EL6Mgeocc',
-    "Persistence Cookie 200 times": 'yts test {shortId} --test-version=20250415 "Persistence Cookie keeps cookie intact after 200 times of device on/off"',
+    "Persistence Cookie 200 times": 'yts test {shortId} --test-version=20250721 "Persistence Cookie keeps cookie intact after 200 times of device on/off"',
     "Live streaming": 'yts launch {shortId} "https://www.youtube.com/tv?c=UC4R8DWoMoI7CAwX8_LjQHig"',
-    "Adaptive Bit Rate": 'yts test {shortId} --test-version=20250415 --guided "Media Adaptive Bit Rate"',
-    "Adaptive Bit Rate - DRM": 'yts test {shortId} --test-version=20250415 --guided "DRM DRM"',
-    "21:9 Aspect Ratio": 'yts test {shortId} --test-version=20250415 --guided "In-app 21:9 Aspect Ratio"',
-    "4:3 Aspect Ratio": 'yts test {shortId} --test-version=20250415 --guided "In-app 4:3 Aspect Ratio"',
-    "16:9 Aspect Ratio": 'yts test {shortId} --test-version=20250415 --guided "In-app 16:9 Aspect Ratio"',
-    "17:30 Aspect Ratio": 'yts test {shortId} --test-version=20250415 --guided "In-app 17:30 Aspect Ratio"',
+    "Adaptive Bit Rate": 'yts test {shortId} --test-version=20250721 --guided "Media Adaptive Bit Rate"',
+    "Adaptive Bit Rate - DRM": 'yts test {shortId} --test-version=20250721 --guided "DRM DRM"',
+    "21:9 Aspect Ratio": 'yts test {shortId} --test-version=20250721 --guided "In-app 21:9 Aspect Ratio"',
+    "4:3 Aspect Ratio": 'yts test {shortId} --test-version=20250721 --guided "In-app 4:3 Aspect Ratio"',
+    "16:9 Aspect Ratio": 'yts test {shortId} --test-version=20250721 --guided "In-app 16:9 Aspect Ratio"',
+    "17:30 Aspect Ratio": 'yts test {shortId} --test-version=20250721 --guided "In-app 17:30 Aspect Ratio"',
     "[Voice&Search] Soft-mic Button": 'yts launch {shortId}',
     "Current Time": 'yts launch {shortId} "https://www.youtube.com/tv?env_showUIStats=true&use_toa=true&v=RgodTgI2EDo"',
-    "Params Remote": 'yts test {shortId} --test-version=20250415 --guided "Params Remote"',
-    "System-wide Exit Key": 'yts test {shortId} --test-version=20250415 --guided "In-app System-wide Exit Key"',
-    "Resizing": 'yts test {shortId} --test-version=20250415 --guided "Media Resizing 2024+"',
-    "Alternate Time Zone": 'yts test {shortId} --test-version=20250415 --guided "Time Alternate Time Zones"',
-    "TTS": 'yts test {shortId} --test-version=20250415 --guided "Speech TTS"',
-    "Required If Unreserved": 'yts test {shortId} --test-version=20250415 --guided "Key Event Required If Unreserved 2024+"',
-    "Localization": 'yts test {shortId} --test-version=20250415 --guided "ETC Localization"',
-    "Screensaver": 'yts test {shortId} --test-version=20250415 --guided "ETC Page Visibility Screensaver"',
-    "High Contrast Text Setting": 'yts test {shortId} --test-version=20250415 --guided "ETC High Contrast Text"',
-    "TTS Setting": 'yts test {shortId} --test-version=20250415 --guided "ETC TTS"',
-    "Animated WebP": 'yts test {shortId} --test-version=20250415 --guided "ETC Animated WebP"',
-    "Non-animated WebP": 'yts test {shortId} --test-version=20250415 --guided "ETC Non-animated WebP"',
-    "Fonts": 'yts test {shortId} --test-version=20250415 --guided "ETC Fonts"',
-    "Page Visibility Overlay": 'yts test {shortId} --test-version=20250415 --guided "ETC Page Visibility Overlay"',
-    "Language Setting": 'yts test {shortId} --test-version=20250415 --guided "ETC Language"',
-    "Captions": 'yts test {shortId} --test-version=20250415 --guided "ETC Captions"',
-    "Params Menu": 'yts test {shortId} --test-version=20250415 --guided "Params Menu"',
+    "Params Remote": 'yts test {shortId} --test-version=20250721 --guided "Params Remote"',
+    "System-wide Exit Key": 'yts test {shortId} --test-version=20250721 --guided "In-app System-wide Exit Key"',
+    "Resizing": 'yts test {shortId} --test-version=20250721 --guided "Media Resizing 2024+"',
+    "Alternate Time Zone": 'yts test {shortId} --test-version=20250721 --guided "Time Alternate Time Zones"',
+    "TTS": 'yts test {shortId} --test-version=20250721 --guided "Speech TTS"',
+    "Required If Unreserved": 'yts test {shortId} --test-version=20250721 --guided "Key Event Required If Unreserved 2024+"',
+    "Localization": 'yts test {shortId} --test-version=20250721 --guided "ETC Localization"',
+    "Screensaver": 'yts test {shortId} --test-version=20250721 --guided "ETC Page Visibility Screensaver"',
+    "High Contrast Text Setting": 'yts test {shortId} --test-version=20250721 --guided "ETC High Contrast Text"',
+    "TTS Setting": 'yts test {shortId} --test-version=20250721 --guided "ETC TTS"',
+    "Animated WebP": 'yts test {shortId} --test-version=20250721 --guided "ETC Animated WebP"',
+    "Non-animated WebP": 'yts test {shortId} --test-version=20250721 --guided "ETC Non-animated WebP"',
+    "Fonts": 'yts test {shortId} --test-version=20250721 --guided "ETC Fonts"',
+    "Page Visibility Overlay": 'yts test {shortId} --test-version=20250721 --guided "ETC Page Visibility Overlay"',
+    "Language Setting": 'yts test {shortId} --test-version=20250721 --guided "ETC Language"',
+    "Captions": 'yts test {shortId} --test-version=20250721 --guided "ETC Captions"',
+    "Params Menu": 'yts test {shortId} --test-version=20250721 --guided "Params Menu"',
     "In-app HDR HLG": 'yts launch {shortId} https://www.youtube.com/tv?v=5w58p6iVhPc',
     "In-app HDR PQ": 'yts launch {shortId} https://www.youtube.com/tv?v=Ss75O8yllyc',
     "In-app Visual Audio / Video Sync": 'yts launch {shortId} "https://www.youtube.com/tv?list=PLT2JIu9jdshqNyrN5gzxaihngAjwFOFMB"',
@@ -278,11 +282,21 @@ TEST_CATEGORIES = {
     "Time Tests": ["Current Time"]
 }
 
-# Keep the instructions keyed to every test. Detailed entries can be expanded without changing the API.
-TEST_INSTRUCTIONS = {name: "Follow the on-screen YTS instructions for this test and verify the documented pass/fail criteria." for name in YTS_TEST_COMMANDS}
-TEST_INSTRUCTIONS["Adaptive Bit Rate"] = "Follow on-screen instructions.\n\nPass/Fail Criteria:\n- Starts at low resolution → adapts upward\n- Smooth transition\n- No stutter, skip, or pause\n- May pass even if it doesn't reach the maximum resolution"
-TEST_INSTRUCTIONS["12 Hour Endurance"] = "Run the test and let it run for 12 hours.\n\nPass/Fail Criteria:\n- Device must continuously play for 12 hours without stopping\n- No crashes or interruptions"
-TEST_INSTRUCTIONS["LiveDRM"] = "Verify the launched video has a LIVE badge and enable Stats for Nerds. Observe playback for 18 minutes.\n\nPass/Fail Criteria:\n- 'Live Latency' and 'Live Mode' fields must appear\n- 'Protected' must include WVA\n- Dropped frames ≤ 0.5%\n- No green/magenta corruption, skipping, stuttering, or buffering"
+# Detailed test instructions are stored in test_instructions.json and loaded at import time.
+TEST_INSTRUCTIONS = {}
+_INSTRUCTION_FILE = BASE_DIR / "test_instructions.json"
+if _INSTRUCTION_FILE.exists():
+    try:
+        import json
+        TEST_INSTRUCTIONS = json.loads(_INSTRUCTION_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        logger.exception("Failed to load test instructions from %s", _INSTRUCTION_FILE)
+
+for _name in YTS_TEST_COMMANDS:
+    TEST_INSTRUCTIONS.setdefault(
+        _name,
+        "Follow the on-screen YTS instructions for this test and verify the documented pass/fail criteria."
+    )
 
 # ============================================
 # Runtime YTS lifecycle
@@ -299,7 +313,6 @@ def _safe_extract_zip(zip_path: Path, extract_dir: Path):
 
 
 def _locate_yts(root: Path) -> Optional[Path]:
-    # Prefer the native executable, then yts.js as a fallback for packages where the launcher is script-based.
     for candidate in root.rglob("yts"):
         if candidate.is_file():
             try:
@@ -345,23 +358,60 @@ def _yts_command(*args: str) -> list[str]:
     return [launcher, *args]
 
 
-def _run_command(command, timeout=TEST_TIMEOUT, log_callback=None):
+def _subprocess_env():
     env = os.environ.copy()
     adb = find_adb()
     if adb:
         env["PATH"] = f"{Path(adb).parent}:{env.get('PATH', '')}"
         env["ADB_PATH"] = adb
-    process = subprocess.Popen(
-        command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        encoding="utf-8", errors="replace", bufsize=1, env=env
-    )
+    return env
+
+
+def _register_process(process):
     with _yts_processes_lock:
         _yts_processes.add(process)
+
+
+def _unregister_process(process):
+    with _yts_processes_lock:
+        _yts_processes.discard(process)
+
+
+def _terminate_process_group(process, kill=False):
+    try:
+        sig = signal.SIGKILL if kill else signal.SIGTERM
+        os.killpg(process.pid, sig)
+        return
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        if process.poll() is None:
+            (process.kill() if kill else process.terminate())
+    except OSError:
+        pass
+
+
+def _run_command(command, timeout=TEST_TIMEOUT, log_callback=None):
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        env=_subprocess_env(),
+        start_new_session=True,
+    )
+    _register_process(process)
     lines = []
     start = time.time()
     try:
+        if process.stdout is None:
+            rc = process.wait(timeout=10)
+            return rc, lines
         while True:
-            line = process.stdout.readline() if process.stdout else ""
+            line = process.stdout.readline()
             if line:
                 line = line.rstrip("\n")
                 lines.append(line)
@@ -370,18 +420,18 @@ def _run_command(command, timeout=TEST_TIMEOUT, log_callback=None):
             elif process.poll() is not None:
                 break
             elif time.time() - start > timeout:
-                process.terminate()
+                _terminate_process_group(process)
                 try:
-                    process.wait(timeout=10)
+                    process.wait(timeout=5)
                 except subprocess.TimeoutExpired:
-                    process.kill()
+                    _terminate_process_group(process, kill=True)
+                    process.wait(timeout=5)
                 if log_callback:
                     log_callback(f"ERROR: Command timed out after {timeout} seconds")
                 break
         return process.wait(timeout=10), lines
     finally:
-        with _yts_processes_lock:
-            _yts_processes.discard(process)
+        _unregister_process(process)
 
 
 def cleanup_yts():
@@ -389,17 +439,14 @@ def cleanup_yts():
     with _yts_processes_lock:
         processes = list(_yts_processes)
     for process in processes:
-        try:
-            if process.poll() is None:
-                process.terminate()
-        except Exception:
-            pass
+        _terminate_process_group(process)
     for process in processes:
         try:
             process.wait(timeout=5)
         except Exception:
+            _terminate_process_group(process, kill=True)
             try:
-                process.kill()
+                process.wait(timeout=5)
             except Exception:
                 pass
     if _yts_runtime_dir:
@@ -431,21 +478,73 @@ def check_adb_devices():
     devices = []
     for line in result.stdout.splitlines()[1:]:
         parts = line.split()
-        if len(parts) >= 2 and parts[1] in {"device", "offline", "unauthorized"}:
+        if len(parts) >= 2 and parts[1] == "device":
             devices.append(parts[0])
     return devices
 
 
 def discover_yts_devices():
-    rc, lines = _run_command(_yts_command("discover"), timeout=60)
-    mapping = {}
-    for line in lines:
-        # Common YTS form: (short-id) ... (adb: SERIAL)
-        short_match = re.search(r"^\s*\(([^)]+)\)", line)
-        adb_match = re.search(r"adb:\s*([^\s)]+)", line)
-        if short_match and adb_match:
-            mapping[adb_match.group(1)] = short_match.group(1)
-    return mapping
+    """Discover ADB devices and YTS Short IDs without waiting on MQTT shutdown."""
+    command = _yts_command("discover")
+    process = subprocess.Popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        bufsize=1,
+        env=_subprocess_env(),
+        start_new_session=True,
+    )
+    _register_process(process)
+    lines = []
+    found = {}
+    deadline = time.time() + DISCOVERY_TIMEOUT
+
+    try:
+        if process.stdout is None:
+            return found
+
+        while time.time() < deadline:
+            line = process.stdout.readline()
+            if line:
+                line = line.rstrip("\n")
+                lines.append(line)
+                match = re.search(
+                    r"\(([^()\s]+)\).*?\(adb:\s*([^\s)]+)\)",
+                    line,
+                    re.IGNORECASE,
+                )
+                if match:
+                    short_id, serial = match.group(1), match.group(2)
+                    found[serial] = short_id
+                    logger.info("YTS discovery: %s -> %s", serial, short_id)
+                    # We have all immediately discoverable entries once the CLI
+                    # emits a non-device status/error after at least one mapping.
+                    if len(found) >= 1 and any("mqtt://" in item.lower() or "failed to resolve" in item.lower() for item in lines[-3:]):
+                        break
+                continue
+            if process.poll() is not None:
+                break
+            time.sleep(0.05)
+
+        if time.time() >= deadline and process.poll() is None:
+            logger.info("YTS discover reached %ss; using discovered device output", DISCOVERY_TIMEOUT)
+
+    finally:
+        _terminate_process_group(process)
+        try:
+            process.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            _terminate_process_group(process, kill=True)
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                pass
+        _unregister_process(process)
+
+    return found
 
 
 def check_node():
