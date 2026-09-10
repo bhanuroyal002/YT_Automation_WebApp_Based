@@ -22,17 +22,13 @@
             <div class="status-item"><span class="label">ADB Devices:</span><span class="value loading" id="adb-status">⏳ Checking...</span></div>
             <div class="status-item"><span class="label">Local Network:</span><span class="value loading" id="network-status">⏳ Checking...</span></div>
         </div>
-        <div class="flex mt-10">
-            <input id="agent-token" type="password" placeholder="Linux Agent pairing token" style="flex:1;min-width:240px;">
-            <button onclick="saveAgentToken()" class="btn-secondary">🔐 Connect Agent</button>
-            <button onclick="checkEnvironment()" class="btn-secondary">🔄 Refresh</button>
-        </div>
-        <p style="font-size:12px;color:#7f8c8d;margin-top:8px;">Start <code>start_agent.sh</code> on the Linux workstation and paste the pairing token printed by the agent.</p>
+        <button onclick="checkEnvironment()" class="btn-secondary">🔄 Refresh Environment</button>
+        <p style="font-size:12px;color:#7f8c8d;margin-top:8px;">Run <code>agent/start_agent.sh</code> on this Linux workstation. The agent stays on 127.0.0.1 and controls only DUTs on the workstation's local network.</p>
     </div>
 
     <div class="card">
         <h2>📱 Device Selection</h2>
-        <div id="devices"><p>Connect the Linux agent, then discover devices.</p></div>
+        <div id="devices"><p>Start the Linux Agent, then discover devices.</p></div>
         <div class="flex mt-10">
             <button onclick="discoverDevices()" class="btn-success">🔍 Discover Devices</button>
             <button onclick="refreshDeviceDetails()" class="btn-secondary" id="refreshDetailsBtn" style="display:none;">🔄 Refresh Details</button>
