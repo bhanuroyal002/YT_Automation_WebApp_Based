@@ -4,7 +4,17 @@ Flask-based web interface for running YouTube Certification/YTS tests against An
 
 ## Platform
 
-This project is intentionally **Linux-only**. It is designed for Ubuntu/Linux hosts and uses the native Linux `adb` client. Windows, WSL, and Windows `adb.exe` are not supported.
+This project is intentionally **Linux-only**. It is designed for Ubuntu/Linux hosts and uses the native Linux `adb` client. Windows, WSL, and Windows `adb.exe` are not supported by this project.
+
+## What this project does
+
+- Discovers ADB-connected DUTs.
+- Runs `yts discover` and maps the DUT to its YTS short ID.
+- Starts configured YTS tests from the browser.
+- Streams test output to the web UI.
+- Stores test results and statistics in SQLite.
+- Downloads a fresh YTS CLI package at application startup.
+- Removes the temporary YTS package when the application exits.
 
 ## Requirements
 
@@ -38,7 +48,7 @@ chmod +x start_app.sh
 ./start_app.sh
 ```
 
-The launcher verifies Linux, checks Python/Node/npm/ADB, creates `.venv`, installs Python dependencies, and starts the Flask application.
+The launcher creates `.venv`, installs Python dependencies, verifies Linux ADB, and starts the Flask application.
 
 Open:
 
@@ -70,27 +80,7 @@ export ADB_DEVICE=<DUT_IP>:5555
 ./start_app.sh
 ```
 
-The application uses the native Linux `adb` command. You may override it with:
-
-```bash
-export ADB_PATH=/path/to/adb
-```
-
-## Runtime YTS CLI
-
-The YTS package is **not stored in this repository**. On application startup, a fresh YTS package is downloaded from:
-
-```text
-http://yts.devicecertification.youtube/yts_server.zip
-```
-
-Override the URL when required:
-
-```bash
-export YTS_DOWNLOAD_URL="<YTS_PACKAGE_URL>"
-```
-
-The package is extracted into a private temporary directory and removed when the application exits. Active YTS child processes are also terminated during cleanup.
+The application uses the native Linux `adb` command from PATH.
 
 ## Manual run
 
@@ -101,37 +91,44 @@ python -m pip install -r requirements.txt
 python app.py
 ```
 
+## Runtime YTS
+
+The YTS package is **not stored in this repository**. On startup the application downloads it from:
+
+```text
+http://yts.devicecertification.youtube/yts_server.zip
+```
+
+You can override the URL if required:
+
+```bash
+export YTS_DOWNLOAD_URL="<YTS_PACKAGE_URL>"
+```
+
+The package is extracted into a temporary directory and deleted when the application exits.
+
 ## Useful environment variables
 
 ```bash
 export HOST=127.0.0.1
 export PORT=5000
-export ADB_PATH=/path/to/adb
 export ADB_DEVICE=192.168.1.7:5555
 export YTS_DOWNLOAD_TIMEOUT=120
-export FLASK_SECRET_KEY='replace-with-a-long-random-value'
-export ALLOWED_ORIGINS='http://127.0.0.1:5000,http://localhost:5000'
 export LOG_LEVEL=INFO
-export MAX_COMPLETED_SESSIONS=200
 ```
 
-## Project layout
+## Project structure
 
 ```text
-YT_Automation_WebApp_Based/
+YT_Automation_WebApp_Based-main/
 ├── app.py
 ├── yts_automation.py
-├── adb_platform.py
-├── requirements.txt
 ├── start_app.sh
-├── .gitignore
+├── requirements.txt
 ├── README.md
-├── data/
-│   └── .gitkeep
+├── templates/
 ├── static/
-│   ├── css/
-│   └── js/
-└── templates/
+└── data/
 ```
 
 ## Troubleshooting
@@ -147,12 +144,6 @@ Install it with:
 
 ```bash
 sudo apt install -y adb
-```
-
-If you use a custom ADB binary:
-
-```bash
-export ADB_PATH=/path/to/adb
 ```
 
 ### DUT not listed
@@ -172,15 +163,4 @@ adb devices
 
 ### YTS download fails
 
-Verify that the YTS server is reachable from the Linux host and that `YTS_DOWNLOAD_URL` points to the correct package.
-
-### Port is already in use
-
-```bash
-export PORT=5001
-./start_app.sh
-```
-
-## Git hygiene
-
-Do not commit `.venv/`, databases, logs, `.env`/secrets, downloaded YTS runtime files, or the bundled `google3/` YTS tree.
+Verify the YTS server is reachable from the Linux host and optionally set `YTS_DOWNLOAD_URL` to the appropriate package URL.
