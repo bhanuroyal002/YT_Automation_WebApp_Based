@@ -1,6 +1,4 @@
-// YTS Automation Web Interface - Linux frontend
-const AGENT_URL = 'http://127.0.0.1:8765';
-let agentConnected = false;
+// YTS Automation Web Interface - Linux server-side execution
 let selectedDevice = null;
 let selectedShortId = null;
 let currentSessionId = null;
@@ -14,55 +12,43 @@ async function getJson(url, options = {}) {
     return data;
 }
 
-async function getAgentJson(path, options = {}) {
-    return getJson(`${AGENT_URL}${path}`, options);
-}
-
-async function detectAgent() {
-    try {
-        const data = await getAgentJson('/api/health');
-        agentConnected = data.agent === true && data.platform === 'Linux';
-        return data;
-    } catch (error) {
-        agentConnected = false;
-        return null;
-    }
-}
-
 async function checkEnvironment() {
-    const agentStatus = document.getElementById('agent-status');
     const nodeStatus = document.getElementById('node-status');
     const ytsStatus = document.getElementById('yts-status');
     const adbStatus = document.getElementById('adb-status');
     const networkStatus = document.getElementById('network-status');
-    [agentStatus, nodeStatus, ytsStatus, adbStatus, networkStatus].forEach(el => {
+    [nodeStatus, ytsStatus, adbStatus, networkStatus].forEach(el => {
         if (el) { el.textContent = '⏳ Checking...'; el.className = 'value loading'; }
     });
-    const data = await detectAgent();
-    if (!data) {
-        if (agentStatus) { agentStatus.textContent = '❌ Offline'; agentStatus.className = 'value error'; }
-        if (nodeStatus) nodeStatus.textContent = '—';
+    try {
+        const data = await getJson('/api/check-environment');
+        if (nodeStatus) { nodeStatus.textContent = data.node_installed ? '✅ Installed' : '❌ Not found'; nodeStatus.className = 'value ' + (data.node_installed ? 'success' : 'error'); }
+        if (ytsStatus) { ytsStatus.textContent = data.yts_installed ? '✅ Ready' : '❌ Not found'; ytsStatus.className = 'value ' + (data.yts_installed ? 'success' : 'error'); }
+        if (adbStatus) { adbStatus.textContent = data.device_count ? `✅ ${data.device_count} found` : '❌ No devices found'; adbStatus.className = 'value ' + (data.device_count ? 'success' : 'error'); }
+        if (networkStatus) {
+            const rejected = Object.keys(data.rejected_devices || {}).length;
+            networkStatus.textContent = rejected ? `⚠️ ${rejected} device(s) outside 192.168.x.x` : '✅ 192.168.x.x supported';
+            networkStatus.className = 'value ' + (rejected ? 'error' : 'success');
+        }
+        await discoverDevices();
+    } catch (error) {
+        console.error('Environment check error:', error);
+        if (nodeStatus) nodeStatus.textContent = '❌ Server check failed';
         if (ytsStatus) ytsStatus.textContent = '—';
-        if (adbStatus) { adbStatus.textContent = '❌ Start Linux Agent'; adbStatus.className = 'value error'; }
-        if (networkStatus) { networkStatus.textContent = '—'; networkStatus.className = 'value'; }
-        return;
+        if (adbStatus) { adbStatus.textContent = '❌ Server ADB unavailable'; adbStatus.className = 'value error'; }
+        if (networkStatus) networkStatus.textContent = '—';
     }
-    if (agentStatus) { agentStatus.textContent = '✅ Connected'; agentStatus.className = 'value success'; }
-    if (nodeStatus) { nodeStatus.textContent = data.node_installed ? '✅ Installed' : '❌ Not found'; nodeStatus.className = 'value ' + (data.node_installed ? 'success' : 'error'); }
-    if (ytsStatus) { ytsStatus.textContent = data.yts_installed ? '✅ Ready' : '❌ Not found'; ytsStatus.className = 'value ' + (data.yts_installed ? 'success' : 'error'); }
-    if (adbStatus) { adbStatus.textContent = data.device_count ? `✅ ${data.device_count} found` : '⚠️ No local-network DUTs'; adbStatus.className = 'value ' + (data.device_count ? 'success' : 'error'); }
-    const networks = (data.local_networks || []).map(item => `${item.interface}: ${item.network}`);
-    if (networkStatus) { networkStatus.textContent = networks.length ? `✅ ${networks.join(', ')}` : '❌ No active network'; networkStatus.className = 'value ' + (networks.length ? 'success' : 'error'); }
-    if (agentConnected) await discoverDevices();
 }
 
 async function discoverDevices() {
     const deviceDiv = document.getElementById('devices');
     try {
-        if (!agentConnected) throw new Error('Linux Agent is not connected');
-        const data = await getAgentJson('/api/discover-devices', {method: 'POST'});
+        const data = await getJson('/api/discover-devices', {method: 'POST'});
         if (!data.devices?.length) {
-            deviceDiv.innerHTML = '<p>⚠️ No ADB DUTs found on the Linux host local network.</p>';
+            const rejected = Object.keys(data.rejected || {});
+            deviceDiv.innerHTML = rejected.length
+                ? `<p>⚠️ No supported DUTs found. ${rejected.length} device(s) are outside 192.168.x.x.</p>`
+                : '<p>⚠️ No ADB DUTs found on the server.</p>';
             return;
         }
         const grid = document.createElement('div');
@@ -73,7 +59,7 @@ async function discoverDevices() {
             item.id = `device-${index}`;
             const hasShortId = device.has_short_id && device.short_id && device.short_id !== 'Not found';
             if (device.network_valid === false) {
-                item.innerHTML = `<strong>📱 ${escapeHtml(device.id)}</strong><br><span class="badge error">❌ Different network</span><br><span style="font-size:12px;color:#7f8c8d;">${escapeHtml(device.network_error || '')}</span>`;
+                item.innerHTML = `<strong>📱 ${escapeHtml(device.id)}</strong><br><span class="badge error">❌ Unsupported network</span><br><span style="font-size:12px;color:#7f8c8d;">${escapeHtml(device.network_error || '')}</span>`;
             } else {
                 item.innerHTML = `<strong>📱 ${escapeHtml(device.id)}</strong><br>${hasShortId ? `<span class="badge success">✅ Short ID: ${escapeHtml(device.short_id)}</span>` : '<span class="badge error">❌ No Short ID</span>'}<br><span style="font-size:12px;color:#7f8c8d;">Click to select</span>`;
                 if (hasShortId) item.addEventListener('click', () => selectDevice(device.id, device.short_id));
@@ -95,13 +81,14 @@ async function selectDevice(deviceId, shortId) {
     const status = document.getElementById('testStatus');
     status.className = 'test-status ready';
     status.innerHTML = `✅ Device selected: ${escapeHtml(deviceId)}`;
-    document.getElementById('refreshDetailsBtn').style.display = 'inline-block';
+    const refresh = document.getElementById('refreshDetailsBtn');
+    if (refresh) refresh.style.display = 'inline-block';
     await fetchDeviceDetails(deviceId);
 }
 
 async function fetchDeviceDetails(deviceId) {
     try {
-        const data = await getAgentJson(`/api/device-details/${encodeURIComponent(deviceId)}`);
+        const data = await getJson(`/api/device-details/${encodeURIComponent(deviceId)}`);
         const details = data.details || {};
         const values = {
             'detail-device-id': deviceId,
@@ -112,7 +99,7 @@ async function fetchDeviceDetails(deviceId) {
             'detail-product': details.product || 'Unknown',
             'detail-fingerprint': details.fingerprint || 'Unknown',
             'detail-shortid': selectedShortId || 'Not found',
-            'detail-network': data.network || 'Same local network'
+            'detail-network': data.network || '192.168.x.x supported'
         };
         document.getElementById('deviceDetails').style.display = 'block';
         Object.entries(values).forEach(([id, value]) => setText(id, value));
@@ -159,7 +146,7 @@ async function runTest() {
     const option = select.options[select.selectedIndex];
     if (option?.dataset.isManual === 'true' && !confirm('⚠️ This test requires user interaction on the device. Continue?')) return;
     try {
-        const data = await getAgentJson('/api/run-test', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({test_name:testName, device_id:selectedDevice, short_id:selectedShortId})});
+        const data = await getJson('/api/run-test', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({test_name:testName, device_id:selectedDevice, short_id:selectedShortId})});
         currentSessionId = data.session_id;
         lastLogSeq = 0;
         document.getElementById('logs').innerHTML = '';
@@ -177,7 +164,7 @@ async function runTest() {
 async function pollLogs() {
     if (!currentSessionId) return;
     try {
-        const data = await getAgentJson(`/api/test-status/${encodeURIComponent(currentSessionId)}`);
+        const data = await getJson(`/api/test-status/${encodeURIComponent(currentSessionId)}`);
         if (Array.isArray(data.logs)) {
             data.logs.filter(log => Number(log.seq || 0) > lastLogSeq).forEach(log => addLog(log.message || '', 'info', log.time || null));
             lastLogSeq = data.logs.reduce((max, log) => Math.max(max, Number(log.seq || 0)), lastLogSeq);
@@ -198,7 +185,7 @@ async function runSuite() {
     const names = Array.from(document.querySelectorAll('#testSelect option:checked')).map(o => o.value).filter(Boolean);
     if (!names.length) return alert('Select tests before running a suite');
     try {
-        const data = await getAgentJson('/api/run-suite', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({test_names:names, device_id:selectedDevice, short_id:selectedShortId})});
+        const data = await getJson('/api/run-suite', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({test_names:names, device_id:selectedDevice, short_id:selectedShortId})});
         currentSessionId = data.session_id;
         lastLogSeq = 0;
         if (logInterval) clearInterval(logInterval);
