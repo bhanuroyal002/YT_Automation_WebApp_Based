@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YTS Automation Tool</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+<body>
+    <div class="container">
+
+        <header>
+            <h1>🎬 YTS Automation Tool</h1>
+            <p>Streamline your YouTube TV certification testing</p>
+        </header>
+
+        <!-- Environment Status -->
+        <div class="card">
+            <h2>🔧 Environment Status</h2>
+
+            <div id="status" class="status-grid">
+
+                <div class="status-item">
+                    <span class="label">Node.js:</span>
+                    <span class="value loading" id="node-status">
+                        ⏳ Checking...
+                    </span>
+                </div>
+
+                <div class="status-item">
+                    <span class="label">YTS CLI:</span>
+                    <span class="value loading" id="yts-status">
+                        ⏳ Checking...
+                    </span>
+                </div>
+
+                <div class="status-item">
+                    <span class="label">ADB Devices:</span>
+                    <span class="value loading" id="adb-status">
+                        ⏳ Checking...
+                    </span>
+                </div>
+
+            </div>
+
+            <button
+                onclick="checkEnvironment()"
+                class="btn-secondary">
+                🔄 Refresh Environment
+            </button>
+        </div>
+
+        <!-- Device Selection -->
+        <div class="card">
+            <h2>📱 Device Selection</h2>
+
+            <div id="devices">
+                <p>Click "Discover Devices" to find connected devices.</p>
+            </div>
+
+            <div class="flex mt-10">
+
+                <button
+                    onclick="discoverDevices()"
+                    class="btn-success">
+                    🔍 Discover Devices
+                </button>
+
+                <button
+                    onclick="refreshDeviceDetails()"
+                    class="btn-secondary"
+                    id="refreshDetailsBtn"
+                    style="display:none;">
+                    🔄 Refresh Details
+                </button>
+
+            </div>
+
+            <!-- Device Details -->
+            <div
+                id="deviceDetails"
+                class="device-details"
+                style="display:none;">
+
+                <h3>📊 Device Details</h3>
+
+                <table>
+
+                    <tr>
+                        <td>Device ID:</td>
+                        <td id="detail-device-id">-</td>
+                    </tr>
+
+                    <tr>
+                        <td>Model:</td>
+                        <td id="detail-model">-</td>
+                    </tr>
+
+                    <tr>
+                        <td>Manufacturer:</td>
+                        <td id="detail-manufacturer">-</td>
+                    </tr>
+
+                    <tr>
+                        <td>Android Version:</td>
+                        <td id="detail-android">-</td>
+                    </tr>
+
+                    <tr>
+                        <td>Security Patch:</td>
+                        <td id="detail-patch">-</td>
+                    </tr>
+
+                    <tr>
+                        <td>Product:</td>
+                        <td id="detail-product">-</td>
+                    </tr>
+
+                    <tr>
+                        <td>Fingerprint:</td>
+                        <td
+                            id="detail-fingerprint"
+                            style="font-family: monospace; font-size: 12px;">
+                            -
+                        </td>
+                    </tr>
+
+                    <tr>
+                        <td>Short ID:</td>
+                        <td id="detail-shortid">-</td>
+                    </tr>
+
+                </table>
+            </div>
+        </div>
+
+        <!-- Test Selection -->
+        <div class="card">
+            <h2>🧪 Test Selection</h2>
+
+            <div class="flex">
+
+                <select
+                    id="testSelect"
+                    style="flex:1; min-width:200px;">
+                    <option value="">
+                        -- Select a test --
+                    </option>
+                </select>
+
+                <button
+                    onclick="runTest()"
+                    class="btn-success">
+                    ▶ Run Test
+                </button>
+
+            </div>
+
+            <!-- Test instructions are loaded automatically
+                 when a test is selected -->
+            <div
+                id="instructionsBox"
+                class="instructions-box">
+
+                <h4 id="instruction-title"></h4>
+
+                <div id="instruction-content"></div>
+
+            </div>
+        </div>
+
+        <!-- Test Execution -->
+        <div class="card">
+            <h2>⚡ Test Execution</h2>
+
+            <div
+                id="testStatus"
+                class="test-status ready">
+                ✅ Ready
+            </div>
+
+            <div
+                id="logs"
+                class="log-box">
+
+                <div style="color: #7f8c8d;">
+                    Logs will appear here...
+                </div>
+
+            </div>
+
+            <div class="flex mt-10">
+
+                <button
+                    onclick="clearLogs()"
+                    class="btn-secondary btn-sm">
+                    🗑️ Clear Logs
+                </button>
+
+                <button
+                    onclick="loadResults()"
+                    class="btn-secondary btn-sm">
+                    📋 Load Results
+                </button>
+
+            </div>
+
+            <pre
+                id="resultsDisplay"
+                style="display:none; margin-top:10px;">
+            </pre>
+
+        </div>
+
+    </div>
+
+    <script
+        src="{{ url_for('static', filename='js/app.js') }}"
+        defer>
+    </script>
+
+</body>
+</html>
