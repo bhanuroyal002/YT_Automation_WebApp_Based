@@ -6,9 +6,10 @@ cd "$APP_DIR"
 
 echo "=================================================="
 echo "  YTS Automation Web Interface - Linux"
+
 echo "=================================================="
 
-if [[ "$(uname -s 2>/dev/null || true)" != Linux* ]]; then
+if [[ "$(uname -s)" != "Linux" ]]; then
     echo "ERROR: This project supports Linux only."
     exit 1
 fi
@@ -16,7 +17,7 @@ fi
 for cmd in python3 node npm adb; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: '$cmd' is not installed or not in PATH."
-        echo "Install the required Linux packages and run this script again."
+        echo "Install the required packages and run this script again."
         exit 1
     fi
 done
@@ -35,6 +36,7 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
 mkdir -p data
+
 export HOST="${HOST:-127.0.0.1}"
 export PORT="${PORT:-5000}"
 export FLASK_DEBUG="${FLASK_DEBUG:-0}"
