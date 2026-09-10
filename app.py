@@ -1,46 +1,54 @@
-"""Flask web server for YTS Automation Tool."""
+#!/usr/bin/env python3
+"""
+Flask web server for YTS Automation Tool
+"""
 import os
 import time
 import uuid
 import threading
 import logging
+import secrets
+import shutil
+import subprocess
 
 from flask import Flask, render_template, request, jsonify
 from flask_cors import CORS
 from flask_socketio import SocketIO
-
-# Keep existing environment-specific Node paths while allowing overrides.
-node_path = os.environ.get("NODE_PATH", r"C:\Program Files\nodejs")
-npm_path = os.environ.get("NPM_PATH", os.path.expanduser(r"~\AppData\Roaming\npm"))
-if os.path.isdir(node_path):
-    os.environ["PATH"] = f"{node_path};{npm_path};{os.environ.get('PATH', '')}"
 
 from yts_automation import (
     YTS_TEST_COMMANDS, YTS_MANUAL_TESTS, YTS_TEST_WAIT_SECONDS,
     TEST_INSTRUCTIONS, TEST_CATEGORIES,
     run_test, run_test_suite, get_test_stats, get_recent_results,
     discover_yts_devices, check_adb_devices, check_node, check_yts_cli,
-    get_device_details_cached, get_test_categories, prepare_yts, cleanup_yts,
+    get_device_details_cached, get_test_categories, prepare_yts, cleanup_yts
 )
-from adb_platform import get_adb_info
 
 app = Flask(__name__)
-app.secret_key = os.environ.get("FLASK_SECRET_KEY") or uuid.uuid4().hex + uuid.uuid4().hex
+app.secret_key = os.environ.get("FLASK_SECRET_KEY") or secrets.token_hex(32)
 
-allowed_origins = [x.strip() for x in os.environ.get(
-    "ALLOWED_ORIGINS", "http://localhost:5000,http://127.0.0.1:5000"
-).split(",") if x.strip()]
+allowed_origins = [
+    origin.strip()
+    for origin in os.environ.get(
+        "ALLOWED_ORIGINS",
+        "http://127.0.0.1:5000,http://localhost:5000"
+    ).split(",")
+    if origin.strip()
+]
+
 CORS(app, resources={r"/api/*": {"origins": allowed_origins}})
 socketio = SocketIO(app, cors_allowed_origins=allowed_origins, async_mode="threading")
 
+# This application controls physical ADB devices from one Linux workstation.
 active_tests = {}
 active_tests_lock = threading.RLock()
+MAX_COMPLETED_SESSIONS = int(os.environ.get("MAX_COMPLETED_SESSIONS", "100"))
 device_locks = {}
 device_locks_lock = threading.Lock()
-MAX_COMPLETED_SESSIONS = int(os.environ.get("MAX_COMPLETED_SESSIONS", "200"))
 
-logging.basicConfig(level=os.environ.get("LOG_LEVEL", "INFO").upper(),
-                    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s")
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 
@@ -63,8 +71,7 @@ def validate_device_and_short_id(device_id, short_id):
         return "Missing device_id"
     if not isinstance(short_id, str) or not short_id.strip():
         return "Missing short_id"
-    devices = check_adb_devices()
-    if device_id not in devices:
+    if device_id not in check_adb_devices():
         return f"ADB device is not connected: {device_id}"
     discovered = discover_yts_devices()
     mapped = discovered.get(device_id)
@@ -81,22 +88,29 @@ def add_session_log(session_id, message):
         if not info:
             return
         logs = info.setdefault("logs", [])
-        logs.append({"seq": info.get("next_log_seq", 0), "time": time.strftime("%H:%M:%S"), "message": str(message)})
-        info["next_log_seq"] = logs[-1]["seq"] + 1
-        if len(logs) > 1000:
-            del logs[:-1000]
+        next_seq = (logs[-1].get("seq", 0) + 1) if logs else 1
+        logs.append({
+            "seq": next_seq,
+            "time": time.strftime("%H:%M:%S"),
+            "message": str(message)
+        })
+        if len(info["logs"]) > 500:
+            info["logs"] = info["logs"][-500:]
 
 
 def prune_completed_sessions():
+    """Keep process-local session state bounded while retaining recent history."""
     with active_tests_lock:
+        if len(active_tests) <= MAX_COMPLETED_SESSIONS:
+            return
         completed = [
-            (sid, info.get("start_time", 0)) for sid, info in active_tests.items()
+            (sid, info.get("start_time", 0))
+            for sid, info in active_tests.items()
             if info.get("status") in {"completed", "failed"}
         ]
-        excess = len(completed) - MAX_COMPLETED_SESSIONS
-        if excess <= 0:
-            return
-        for sid, _ in sorted(completed, key=lambda item: item[1])[:excess]:
+        completed.sort(key=lambda item: item[1])
+        excess = max(0, len(active_tests) - MAX_COMPLETED_SESSIONS)
+        for sid, _ in completed[:excess]:
             active_tests.pop(sid, None)
 
 
@@ -108,23 +122,37 @@ def index():
 @app.route('/api/check-environment', methods=['GET'])
 def check_environment():
     try:
-        adb_info = get_adb_info()
+        node_ok = check_node()
+        yts_ok = check_yts_cli()
         devices = check_adb_devices()
+        adb_path = shutil.which('adb')
+        adb_ok = False
+        if adb_path:
+            try:
+                result = subprocess.run(
+                    [adb_path, 'version'],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    timeout=10,
+                    check=False,
+                )
+                adb_ok = result.returncode == 0
+            except (OSError, subprocess.SubprocessError):
+                adb_ok = False
+
         return jsonify({
             'success': True,
-            'node_installed': check_node(),
-            'yts_installed': check_yts_cli(),
-            'adb_installed': adb_info.get('available', False),
-            'adb_path': adb_info.get('path'),
-            'adb_platform': adb_info.get('platform'),
-            'adb_version': adb_info.get('version'),
-            'adb_error': adb_info.get('error'),
+            'node_installed': node_ok,
+            'yts_installed': yts_ok,
+            'adb_installed': adb_ok,
+            'adb_path': adb_path,
+            'adb_platform': 'Linux',
             'devices': devices,
             'device_count': len(devices)
         })
-    except Exception as exc:
+    except Exception as e:
         logger.exception("Environment check failed")
-        return jsonify({'success': False, 'error': str(exc)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/discover-devices', methods=['POST'])
@@ -132,31 +160,41 @@ def discover_devices():
     try:
         shortid_map = discover_yts_devices()
         devices = check_adb_devices()
-        device_info = [{'id': d, 'short_id': shortid_map.get(d, 'Not found'),
-                        'has_short_id': d in shortid_map} for d in devices]
+        device_info = [
+            {
+                'id': device,
+                'short_id': shortid_map.get(device, 'Not found'),
+                'has_short_id': device in shortid_map
+            }
+            for device in devices
+        ]
         return jsonify({'success': True, 'devices': device_info, 'shortid_map': shortid_map})
-    except Exception as exc:
+    except Exception as e:
         logger.exception("Device discovery failed")
-        return jsonify({'success': False, 'error': str(exc)}), 500
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/device-details/<path:device_id>', methods=['GET'])
 def device_details(device_id):
     try:
-        return jsonify({'success': True, 'device_id': device_id,
-                        'details': get_device_details_cached(device_id)})
-    except Exception as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 500
+        details = get_device_details_cached(device_id)
+        return jsonify({'success': True, 'device_id': device_id, 'details': details})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/test-commands', methods=['GET'])
 def get_test_commands():
-    return jsonify({'success': True, 'tests': [
-        {'name': name, 'is_manual': name in YTS_MANUAL_TESTS,
-         'wait_time': YTS_TEST_WAIT_SECONDS.get(name, 0),
-         'instructions': TEST_INSTRUCTIONS.get(name, 'No instructions available')}
+    tests = [
+        {
+            'name': name,
+            'is_manual': name in YTS_MANUAL_TESTS,
+            'wait_time': YTS_TEST_WAIT_SECONDS.get(name, 0),
+            'instructions': TEST_INSTRUCTIONS.get(name, 'No instructions available')
+        }
         for name in YTS_TEST_COMMANDS
-    ]})
+    ]
+    return jsonify({'success': True, 'tests': tests})
 
 
 @app.route('/api/test-categories', methods=['GET'])
@@ -168,36 +206,21 @@ def get_categories():
 def get_stats():
     try:
         return jsonify({'success': True, 'stats': get_test_stats()})
-    except Exception as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/test-instruction/<path:test_name>', methods=['GET'])
 def get_test_instruction(test_name):
     if not validate_test_name(test_name):
         return jsonify({'success': False, 'error': 'Unknown test'}), 404
-    return jsonify({'success': True, 'test_name': test_name,
-                    'instruction': TEST_INSTRUCTIONS.get(test_name, 'No instructions available'),
-                    'is_manual': test_name in YTS_MANUAL_TESTS,
-                    'wait_time': YTS_TEST_WAIT_SECONDS.get(test_name, 0)})
-
-
-def _new_session(test_name, device_id, short_id, **extra):
-    session_id = uuid.uuid4().hex
-    with active_tests_lock:
-        active_tests[session_id] = {
-            'test_name': test_name, 'device_id': device_id, 'short_id': short_id,
-            'status': 'running', 'start_time': time.time(), 'result': None,
-            'logs': [], 'next_log_seq': 0, **extra
-        }
-    return session_id
-
-
-def _acquire_device(device_id):
-    lock = get_device_lock(device_id)
-    if not lock.acquire(blocking=False):
-        return None
-    return lock
+    return jsonify({
+        'success': True,
+        'test_name': test_name,
+        'instruction': TEST_INSTRUCTIONS.get(test_name, 'No instructions available'),
+        'is_manual': test_name in YTS_MANUAL_TESTS,
+        'wait_time': YTS_TEST_WAIT_SECONDS.get(test_name, 0)
+    })
 
 
 @app.route('/api/run-test', methods=['POST'])
@@ -211,13 +234,21 @@ def start_test():
     error = validate_device_and_short_id(device_id, short_id)
     if error:
         return jsonify({'success': False, 'error': error}), 400
-    lock = _acquire_device(device_id)
-    if lock is None:
+    device_lock = get_device_lock(device_id)
+    if not device_lock.acquire(blocking=False):
         return jsonify({'success': False, 'error': f'Device {device_id} already has a running test'}), 409
-    sid = _new_session(test_name, device_id, short_id)
-    threading.Thread(target=run_test_async, args=(sid, short_id, test_name, device_id, lock),
-                     name=f'yts-test-{sid[:8]}', daemon=True).start()
-    return jsonify({'success': True, 'session_id': sid, 'message': f'Test "{test_name}" started'})
+    session_id = uuid.uuid4().hex
+    with active_tests_lock:
+        active_tests[session_id] = {
+            'test_name': test_name, 'device_id': device_id, 'short_id': short_id,
+            'status': 'running', 'start_time': time.time(), 'result': None, 'logs': []
+        }
+    threading.Thread(
+        target=run_test_async,
+        args=(session_id, short_id, test_name, device_id, device_lock),
+        name=f'yts-test-{session_id[:8]}', daemon=True
+    ).start()
+    return jsonify({'success': True, 'session_id': session_id, 'message': f'Test "{test_name}" started'})
 
 
 @app.route('/api/run-suite', methods=['POST'])
@@ -234,15 +265,22 @@ def start_suite():
     error = validate_device_and_short_id(device_id, short_id)
     if error:
         return jsonify({'success': False, 'error': error}), 400
-    lock = _acquire_device(device_id)
-    if lock is None:
+    device_lock = get_device_lock(device_id)
+    if not device_lock.acquire(blocking=False):
         return jsonify({'success': False, 'error': f'Device {device_id} already has a running test'}), 409
-    sid = _new_session('Test Suite', device_id, short_id, is_suite=True,
-                       tests=list(test_names), results={})
-    threading.Thread(target=run_suite_async, args=(sid, short_id, test_names, device_id, lock),
-                     name=f'yts-suite-{sid[:8]}', daemon=True).start()
-    return jsonify({'success': True, 'session_id': sid,
-                    'message': f'Suite with {len(test_names)} tests started'})
+    session_id = f"suite_{uuid.uuid4().hex}"
+    with active_tests_lock:
+        active_tests[session_id] = {
+            'test_name': 'Test Suite', 'device_id': device_id, 'short_id': short_id,
+            'status': 'running', 'start_time': time.time(), 'result': None, 'logs': [],
+            'is_suite': True, 'tests': list(test_names), 'results': {}
+        }
+    threading.Thread(
+        target=run_suite_async,
+        args=(session_id, short_id, test_names, device_id, device_lock),
+        name=f'yts-suite-{session_id[-8:]}', daemon=True
+    ).start()
+    return jsonify({'success': True, 'session_id': session_id, 'message': f'Suite with {len(test_names)} tests started'})
 
 
 @app.route('/api/test-status/<session_id>', methods=['GET'])
@@ -251,17 +289,23 @@ def get_test_status(session_id):
         info = active_tests.get(session_id)
         if info is None:
             return jsonify({'success': False, 'error': 'Session not found'}), 404
-        return jsonify({'success': True, 'status': info['status'], 'result': info.get('result'),
-                        'logs': list(info.get('logs', [])), 'elapsed_time': time.time() - info['start_time'],
-                        'is_suite': info.get('is_suite', False), 'results': dict(info.get('results', {}))})
+        return jsonify({
+            'success': True,
+            'status': info['status'],
+            'result': info.get('result'),
+            'logs': list(info.get('logs', [])),
+            'elapsed_time': time.time() - info['start_time'],
+            'is_suite': info.get('is_suite', False),
+            'results': dict(info.get('results', {}))
+        })
 
 
 @app.route('/api/test-results', methods=['GET'])
 def get_test_results():
     try:
         return jsonify({'success': True, 'results': get_recent_results(limit=100)})
-    except Exception as exc:
-        return jsonify({'success': False, 'error': str(exc)}), 500
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @app.route('/api/health', methods=['GET'])
@@ -271,9 +315,13 @@ def health_check():
         components = {'node': check_node(), 'yts': check_yts_cli(), 'adb': bool(devices)}
         with active_tests_lock:
             active_count = sum(1 for x in active_tests.values() if x.get('status') == 'running')
-        return jsonify({'status': 'healthy' if all(components.values()) else 'degraded',
-                        'timestamp': time.time(), 'components': components,
-                        'device_count': len(devices), 'active_tests': active_count})
+        return jsonify({
+            'status': 'healthy' if all(components.values()) else 'degraded',
+            'timestamp': time.time(),
+            'components': components,
+            'device_count': len(devices),
+            'active_tests': active_count
+        })
     except Exception:
         logger.exception('Health check failed')
         return jsonify({'status': 'unhealthy', 'timestamp': time.time()}), 500
@@ -311,13 +359,20 @@ def run_suite_async(session_id, short_id, test_names, device_id, device_lock):
             log_callback(f"{'=' * 40}")
             result = run_test(short_id, test_name, device_id, log_callback)
             results[test_name] = result
-            if result == 'PASSED': passed += 1
-            else: failed += 1
+            if result == 'PASSED':
+                passed += 1
+            else:
+                failed += 1
             with active_tests_lock:
                 if session_id in active_tests:
                     active_tests[session_id]['results'] = dict(results)
+
         summary = f"{passed}/{total} passed"
-        log_callback(f"\n{'=' * 40}\n📊 SUITE COMPLETE\nTotal: {total} | ✅ Passed: {passed} | ❌ Failed: {failed} | 📈 Rate: {round(passed * 100 / total, 1)}%\n{'=' * 40}")
+        log_callback(
+            f"\n{'=' * 40}\n📊 SUITE COMPLETE\n"
+            f"Total: {total} | ✅ Passed: {passed} | ❌ Failed: {failed} | "
+            f"📈 Rate: {round(passed * 100 / total, 1)}%\n{'=' * 40}"
+        )
         with active_tests_lock:
             if session_id in active_tests:
                 active_tests[session_id]['status'] = 'completed'
@@ -337,11 +392,15 @@ def run_suite_async(session_id, short_id, test_names, device_id, device_lock):
 
 
 def main():
+    if os.uname().sysname != 'Linux':
+        print('ERROR: This project supports Linux only.')
+        raise SystemExit(1)
+
     host = os.environ.get('HOST', '127.0.0.1')
     port = int(os.environ.get('PORT', '5000'))
     print("\n" + "=" * 50)
     print("  🚀 YTS Automation Web Interface")
-    print("  Version 2.3 - Runtime YTS + Cross-Platform ADB")
+    print("  Version 2.4 - Linux + Runtime YTS")
     print("=" * 50)
     print("\nPreparing YTS CLI (fresh download for this run)...")
     try:
@@ -352,8 +411,10 @@ def main():
         print(f"\nERROR: Could not prepare YTS CLI: {exc}")
         cleanup_yts()
         raise SystemExit(1)
+
     print(f"\nStarting web server on http://{host}:{port}")
-    print("YTS is stored only in a temporary directory for this run and is removed on exit.")
+    print("YTS is stored only in a temporary directory for this run.")
+    print("It will be removed automatically when the application exits.")
     print("Press Ctrl+C to stop\n")
     try:
         socketio.run(app, debug=False, host=host, port=port)
