@@ -16,19 +16,19 @@
     <div class="card">
         <h2>🔧 Environment Status</h2>
         <div id="status" class="status-grid">
-            <div class="status-item"><span class="label">Linux Agent:</span><span class="value loading" id="agent-status">⏳ Checking...</span></div>
+            <div class="status-item"><span class="label">Execution:</span><span class="value success" id="execution-status">✅ Server-side</span></div>
             <div class="status-item"><span class="label">Node.js:</span><span class="value loading" id="node-status">⏳ Checking...</span></div>
             <div class="status-item"><span class="label">YTS CLI:</span><span class="value loading" id="yts-status">⏳ Checking...</span></div>
             <div class="status-item"><span class="label">ADB Devices:</span><span class="value loading" id="adb-status">⏳ Checking...</span></div>
-            <div class="status-item"><span class="label">Local Network:</span><span class="value loading" id="network-status">⏳ Checking...</span></div>
+            <div class="status-item"><span class="label">DUT Network:</span><span class="value success" id="network-status">192.168.x.x</span></div>
         </div>
         <button onclick="checkEnvironment()" class="btn-secondary">🔄 Refresh Environment</button>
-        <p style="font-size:12px;color:#7f8c8d;margin-top:8px;">Run <code>agent/start_agent.sh</code> on this Linux workstation. The agent stays on 127.0.0.1 and controls only DUTs on the workstation's local network.</p>
+        <p style="font-size:12px;color:#7f8c8d;margin-top:8px;">No software or configuration is required on user machines. ADB and YTS execute on the Linux server. DUTs are expected to use the 192.168.x.x network range.</p>
     </div>
 
     <div class="card">
         <h2>📱 Device Selection</h2>
-        <div id="devices"><p>Start the Linux Agent, then discover devices.</p></div>
+        <div id="devices"><p>Click "Discover Devices" to find connected devices.</p></div>
         <div class="flex mt-10">
             <button onclick="discoverDevices()" class="btn-success">🔍 Discover Devices</button>
             <button onclick="refreshDeviceDetails()" class="btn-secondary" id="refreshDetailsBtn" style="display:none;">🔄 Refresh Details</button>
