@@ -1,0 +1,25 @@
+[Unit]
+Description=YTS Automation Web Application
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=yts
+Group=yts
+WorkingDirectory=/opt/yts-automation
+EnvironmentFile=/etc/yts-automation/yts-automation.env
+ExecStart=/opt/yts-automation/.venv/bin/gunicorn --workers 1 --threads 100 --timeout 120 --bind 127.0.0.1:5000 app:app
+Restart=always
+RestartSec=5
+
+# Keep the application isolated from the public filesystem while allowing
+# ADB/YTS subprocesses and the SQLite data directory to work normally.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/opt/yts-automation/data /tmp
+
+[Install]
+WantedBy=multi-user.target
