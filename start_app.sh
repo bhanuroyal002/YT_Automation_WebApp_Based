@@ -5,24 +5,70 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$APP_DIR"
 
 echo "=================================================="
-echo "  YTS Automation Web Interface - Linux"
+echo "  YTS Automation Tool - Linux"
 echo "=================================================="
+
+echo
 
 if [[ "$(uname -s)" != "Linux" ]]; then
     echo "ERROR: This project supports Linux only."
     exit 1
 fi
 
-for cmd in python3 node npm; do
+# Install required Ubuntu/Debian system packages automatically when possible.
+# This keeps the user setup to one command after cloning the repository.
+install_system_dependencies() {
+    local missing=()
+    command -v python3 >/dev/null 2>&1 || missing+=(python3)
+    command -v node >/dev/null 2>&1 || missing+=(nodejs)
+    command -v npm >/dev/null 2>&1 || missing+=(npm)
+    command -v adb >/dev/null 2>&1 || missing+=(adb)
+
+    if [[ ${#missing[@]} -eq 0 ]]; then
+        return 0
+    fi
+
+    if ! command -v apt-get >/dev/null 2>&1; then
+        echo "ERROR: Missing system dependencies: ${missing[*]}"
+        echo "This automatic installer supports Ubuntu/Debian (apt)."
+        exit 1
+    fi
+
+    if [[ $EUID -eq 0 ]]; then
+        SUDO=""
+    elif command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+    else
+        echo "ERROR: Missing system dependencies: ${missing[*]}"
+        echo "Please install them with root privileges and run this script again."
+        exit 1
+    fi
+
+    echo "Installing missing Linux dependencies: ${missing[*]}"
+    $SUDO apt-get update
+    $SUDO apt-get install -y python3 python3-venv python3-pip nodejs npm adb
+}
+
+install_system_dependencies
+
+# python3-venv is required for the isolated project environment.
+if ! python3 -m venv --help >/dev/null 2>&1; then
+    if command -v apt-get >/dev/null 2>&1; then
+        if [[ $EUID -eq 0 ]]; then SUDO=""; elif command -v sudo >/dev/null 2>&1; then SUDO="sudo"; else SUDO=""; fi
+        $SUDO apt-get update
+        $SUDO apt-get install -y python3-venv python3-pip
+    fi
+fi
+
+# Verify the required tools after installation.
+for cmd in python3 node npm adb; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: '$cmd' is not installed or not in PATH."
-        echo "Install the required packages and run this script again."
         exit 1
     fi
 done
 
-# Validate native Linux ADB explicitly. A broken adb wrapper may exist earlier
-# in PATH, so test the known Linux package path first.
+# Validate that ADB is a native Linux executable and not a Windows/WSL wrapper.
 ADB_BIN=""
 for candidate in "${ADB_PATH:-}" /usr/bin/adb /usr/local/bin/adb; do
     if [[ -n "$candidate" && -f "$candidate" ]] && "$candidate" version >/dev/null 2>&1; then
@@ -45,6 +91,7 @@ printf 'Node   : '; node --version
 printf 'npm    : '; npm --version
 printf 'ADB    : '; "$ADB_BIN" version | head -n 1
 
+# Create and maintain an isolated Python environment for the application.
 if [[ ! -d ".venv" ]]; then
     echo "Creating Python virtual environment..."
     python3 -m venv .venv
@@ -64,7 +111,7 @@ if [[ -n "${ADB_DEVICE:-}" ]]; then
 fi
 
 echo
-echo "Starting YTS Automation Web Interface..."
+echo "Starting YTS Automation Tool..."
 echo "Open: http://${HOST}:${PORT}"
 echo "Press Ctrl+C to stop."
 echo
