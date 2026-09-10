@@ -36,13 +36,22 @@ NEW_FUNCTION = r'''def discover_yts_devices():
         start_new_session=True,
     )
 
+    def _as_text(value):
+        if value is None:
+            return ""
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return str(value)
+
+    output = ""
     try:
         try:
             output, _ = process.communicate(timeout=20)
+            output = _as_text(output)
         except subprocess.TimeoutExpired as exc:
             # Discovery output is already available even when the YTS process
             # remains alive because of its MQTT connection.
-            output = exc.stdout or ""
+            output = _as_text(exc.stdout)
             try:
                 os.killpg(process.pid, signal.SIGTERM)
             except (OSError, ProcessLookupError):
@@ -52,8 +61,9 @@ NEW_FUNCTION = r'''def discover_yts_devices():
                     pass
             try:
                 tail, _ = process.communicate(timeout=5)
-                output += tail or ""
-            except subprocess.TimeoutExpired:
+                output += _as_text(tail)
+            except subprocess.TimeoutExpired as exc2:
+                output += _as_text(exc2.stdout)
                 try:
                     os.killpg(process.pid, signal.SIGKILL)
                 except (OSError, ProcessLookupError):
@@ -62,7 +72,7 @@ NEW_FUNCTION = r'''def discover_yts_devices():
                     except OSError:
                         pass
                 tail, _ = process.communicate()
-                output += tail or ""
+                output += _as_text(tail)
             logger.info("YTS discover timed out after 20s; using discovered device output")
     finally:
         if process.poll() is None:
@@ -94,7 +104,7 @@ def main():
         raise RuntimeError("Could not find end of discover_yts_devices()")
     updated = source[:start] + NEW_FUNCTION + source[end:]
     TARGET.write_text(updated, encoding="utf-8")
-    print("Updated discover_yts_devices(): bounded YTS discovery and robust Short ID parsing.")
+    print("Updated discover_yts_devices(): bounded YTS discovery, bytes-safe output, and robust Short ID parsing.")
 
 
 if __name__ == "__main__":
