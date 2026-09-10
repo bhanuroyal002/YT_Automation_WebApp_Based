@@ -5,20 +5,18 @@ APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$APP_DIR"
 
 echo "=================================================="
-echo "  YTS Automation Web Interface"
+echo "  YTS Automation Web Interface - Linux"
 echo "=================================================="
 
-if grep -qi microsoft /proc/version 2>/dev/null; then
-    echo "Environment: WSL"
-elif [[ "$(uname -s 2>/dev/null || true)" == Linux* ]]; then
-    echo "Environment: Linux"
-else
-    echo "Environment: Unix-like shell"
+if [[ "$(uname -s 2>/dev/null || true)" != Linux* ]]; then
+    echo "ERROR: This project supports Linux only."
+    exit 1
 fi
 
-for cmd in python3 node npm; do
+for cmd in python3 node npm adb; do
     if ! command -v "$cmd" >/dev/null 2>&1; then
         echo "ERROR: '$cmd' is not installed or not in PATH."
+        echo "Install the required Linux packages and run this script again."
         exit 1
     fi
 done
@@ -26,6 +24,7 @@ done
 echo "Python : $(python3 --version)"
 echo "Node   : $(node --version)"
 echo "npm    : $(npm --version)"
+echo "ADB    : $(adb version | head -n 1)"
 
 if [[ ! -d ".venv" ]]; then
     echo "Creating Python virtual environment..."
@@ -35,20 +34,6 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 
-# Ensure a native Linux ADB client is available under Linux/WSL.
-if grep -qi microsoft /proc/version 2>/dev/null || [[ "$(uname -s 2>/dev/null || true)" == Linux* ]]; then
-    if ! /usr/bin/adb version >/dev/null 2>&1 && ! adb version >/dev/null 2>&1; then
-        if command -v apt-get >/dev/null 2>&1; then
-            echo "[INFO] Native Linux ADB is not available. Installing android-tools-adb..."
-            sudo apt-get update
-            sudo apt-get install -y adb
-        else
-            echo "ERROR: Native Linux ADB is unavailable and apt-get is not installed."
-            exit 1
-        fi
-    fi
-fi
-
 mkdir -p data
 export HOST="${HOST:-127.0.0.1}"
 export PORT="${PORT:-5000}"
@@ -56,6 +41,7 @@ export FLASK_DEBUG="${FLASK_DEBUG:-0}"
 
 if [[ -n "${ADB_DEVICE:-}" ]]; then
     echo "ADB device target: ${ADB_DEVICE}"
+    adb connect "${ADB_DEVICE}" || true
 fi
 
 echo
