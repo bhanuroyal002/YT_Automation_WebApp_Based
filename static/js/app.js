@@ -1,13 +1,21 @@
 // YTS Automation Web Interface - Linux frontend
+const AGENT_URL = 'http://127.0.0.1:8765';
+let agentToken = localStorage.getItem('ytsAgentToken') || '';
+let agentConnected = false;
 let selectedDevice = null;
 let selectedShortId = null;
 let currentSessionId = null;
 let logInterval = null;
 let lastLogSeq = 0;
-let agentBaseUrl = 'http://127.0.0.1:8765';
-let agentConnected = false;
 
-async function getJson(url, options) {
+function headersWithAgentToken(extra = {}) {
+    const headers = new Headers(extra);
+    if (agentToken) headers.set('X-YTS-Agent-Token', agentToken);
+    headers.set('Accept', 'application/json');
+    return headers;
+}
+
+async function getJson(url, options = {}) {
     const response = await fetch(url, options);
     const data = await response.json();
     if (!response.ok || data.success === false) throw new Error(data.error || `Request failed (${response.status})`);
@@ -15,15 +23,22 @@ async function getJson(url, options) {
 }
 
 async function getAgentJson(path, options = {}) {
-    const headers = new Headers(options.headers || {});
-    headers.set('Accept', 'application/json');
-    return getJson(`${agentBaseUrl}${path}`, {...options, headers});
+    const opts = {...options, headers: headersWithAgentToken(options.headers || {})};
+    if (window.Request && !('targetAddressSpace' in Request.prototype)) {
+        // Older browsers simply ignore the absence of targetAddressSpace.
+    }
+    try {
+        return await getJson(`${AGENT_URL}${path}`, opts);
+    } catch (error) {
+        if (error.message.includes('(401)')) agentConnected = false;
+        throw error;
+    }
 }
 
 async function detectAgent() {
     try {
-        const data = await getAgentJson('/api/health', {method: 'GET'});
-        agentConnected = Boolean(data.agent && data.platform === 'Linux');
+        const data = await getJson(`${AGENT_URL}/health`, {headers: {'Accept': 'application/json'}});
+        agentConnected = data.platform === 'Linux' && data.agent === 'connected';
         return data;
     } catch (error) {
         agentConnected = false;
@@ -31,45 +46,52 @@ async function detectAgent() {
     }
 }
 
+function saveAgentToken() {
+    const input = document.getElementById('agent-token');
+    const value = input?.value.trim();
+    if (!value) return alert('Paste the pairing token printed by start_agent.sh.');
+    agentToken = value;
+    localStorage.setItem('ytsAgentToken', value);
+    checkEnvironment();
+}
+
+function loadSavedAgentToken() {
+    const input = document.getElementById('agent-token');
+    if (input && agentToken) input.value = agentToken;
+}
+
 async function checkEnvironment() {
+    const agentStatus = document.getElementById('agent-status');
     const nodeStatus = document.getElementById('node-status');
     const ytsStatus = document.getElementById('yts-status');
     const adbStatus = document.getElementById('adb-status');
-    [nodeStatus, ytsStatus, adbStatus].forEach(el => { el.textContent = '⏳ Checking...'; el.className = 'value loading'; });
-    try {
-        const data = await detectAgent();
-        if (!data) {
-            nodeStatus.textContent = '❌ Linux Agent offline';
-            nodeStatus.className = 'value error';
-            ytsStatus.textContent = '—';
-            ytsStatus.className = 'value';
-            adbStatus.textContent = '❌ Start Linux Agent';
-            adbStatus.className = 'value error';
-            const deviceDiv = document.getElementById('devices');
-            if (deviceDiv) deviceDiv.innerHTML = '<p>⚠️ Linux YTS Agent is not connected. Start <code>agent/start_agent.sh</code> on this Linux machine and refresh this page.</p>';
-            return;
-        }
-
-        nodeStatus.textContent = data.node_installed ? '✅ Installed' : '❌ Not found';
-        nodeStatus.className = 'value ' + (data.node_installed ? 'success' : 'error');
-        ytsStatus.textContent = data.yts_installed ? '✅ Installed' : '❌ Not found';
-        ytsStatus.className = 'value ' + (data.yts_installed ? 'success' : 'error');
-        adbStatus.textContent = data.device_count > 0 ? `✅ ${data.device_count} found` : '❌ No local-network DUTs';
-        adbStatus.className = 'value ' + (data.device_count > 0 ? 'success' : 'error');
-        await discoverDevices();
-    } catch (error) {
-        console.error('Environment check failed:', error);
-        [nodeStatus, ytsStatus, adbStatus].forEach(el => { el.textContent = '❌ Error'; el.className = 'value error'; });
+    const networkStatus = document.getElementById('network-status');
+    [agentStatus, nodeStatus, ytsStatus, adbStatus, networkStatus].forEach(el => { if (el) { el.textContent = '⏳ Checking...'; el.className = 'value loading'; } });
+    const data = await detectAgent();
+    if (!data) {
+        if (agentStatus) { agentStatus.textContent = '❌ Offline'; agentStatus.className = 'value error'; }
+        if (nodeStatus) nodeStatus.textContent = '—';
+        if (ytsStatus) ytsStatus.textContent = '—';
+        if (adbStatus) { adbStatus.textContent = '❌ Start Linux Agent'; adbStatus.className = 'value error'; }
+        if (networkStatus) networkStatus.textContent = '—';
+        return;
     }
+    if (agentStatus) { agentStatus.textContent = '✅ Connected'; agentStatus.className = 'value success'; }
+    if (nodeStatus) { nodeStatus.textContent = data.node_installed ? '✅ Installed' : '❌ Not found'; nodeStatus.className = 'value ' + (data.node_installed ? 'success' : 'error'); }
+    if (ytsStatus) { ytsStatus.textContent = data.yts_installed ? '✅ Ready' : '❌ Not found'; ytsStatus.className = 'value ' + (data.yts_installed ? 'success' : 'error'); }
+    if (adbStatus) { adbStatus.textContent = data.device_count ? `✅ ${data.device_count} found` : '⚠️ No local-network DUTs'; adbStatus.className = 'value ' + (data.device_count ? 'success' : 'error'); }
+    if (networkStatus) { networkStatus.textContent = data.networks?.length ? `✅ ${data.networks.join(', ')}` : '❌ No active network'; networkStatus.className = 'value ' + (data.networks?.length ? 'success' : 'error'); }
+    if (agentToken) await discoverDevices();
 }
 
 async function discoverDevices() {
     const deviceDiv = document.getElementById('devices');
     try {
         if (!agentConnected) throw new Error('Linux Agent is not connected');
-        const data = await getAgentJson('/api/discover-devices', { method: 'POST' });
-        if (!data.devices || data.devices.length === 0) {
-            deviceDiv.innerHTML = '<p>⚠️ No DUTs found on the Linux machine local network.</p>';
+        if (!agentToken) throw new Error('Enter the Linux Agent pairing token');
+        const data = await getAgentJson('/devices', {method: 'GET'});
+        if (!data.devices?.length) {
+            deviceDiv.innerHTML = '<p>⚠️ No ADB DUTs found on the Linux host local network.</p>';
             return;
         }
         const grid = document.createElement('div');
@@ -79,13 +101,9 @@ async function discoverDevices() {
             item.className = 'device-item';
             item.id = `device-${index}`;
             const hasShortId = device.has_short_id && device.short_id && device.short_id !== 'Not found';
-            const networkNote = device.network_valid === false
-                ? `<br><span class="badge error">❌ ${escapeHtml(device.network_error || 'Not on local network')}</span>`
-                : '';
-            item.innerHTML = `<strong>📱 ${escapeHtml(device.id)}</strong><br>${hasShortId ? `<span class="badge success">✅ Short ID: ${escapeHtml(device.short_id)}</span>` : '<span class="badge error">❌ No Short ID</span>'}${networkNote}<br><span style="font-size:12px;color:#7f8c8d;">Click to select</span>`;
-            if (device.network_valid !== false && hasShortId) {
-                item.addEventListener('click', () => selectDevice(device.id, device.short_id));
-            }
+            const network = device.network?.network ? `Network: ${device.network.network}` : 'Local ADB';
+            item.innerHTML = `<strong>📱 ${escapeHtml(device.id)}</strong><br>${hasShortId ? `<span class="badge success">✅ Short ID: ${escapeHtml(device.short_id)}</span>` : '<span class="badge error">❌ No Short ID</span>'}<br><span style="font-size:12px;color:#7f8c8d;">${escapeHtml(network)} · Click to select</span>`;
+            if (hasShortId) item.addEventListener('click', () => selectDevice(device.id, device.short_id));
             grid.appendChild(item);
         });
         deviceDiv.replaceChildren(grid);
@@ -97,25 +115,19 @@ async function discoverDevices() {
 
 async function selectDevice(deviceId, shortId) {
     document.querySelectorAll('.device-item').forEach(el => el.classList.remove('selected'));
-    document.querySelectorAll('.device-item').forEach(el => {
-        const strong = el.querySelector('strong');
-        if (strong && strong.textContent.includes(deviceId)) el.classList.add('selected');
-    });
+    document.querySelectorAll('.device-item').forEach(el => { if (el.querySelector('strong')?.textContent.includes(deviceId)) el.classList.add('selected'); });
     selectedDevice = deviceId;
     selectedShortId = shortId;
     const status = document.getElementById('testStatus');
     status.className = 'test-status ready';
     status.innerHTML = `✅ Device selected: ${escapeHtml(deviceId)}`;
-    const refresh = document.getElementById('refreshDetailsBtn');
-    if (refresh) refresh.style.display = 'inline-block';
+    document.getElementById('refreshDetailsBtn').style.display = 'inline-block';
     await fetchDeviceDetails(deviceId);
 }
 
 async function fetchDeviceDetails(deviceId) {
     try {
-        const data = agentConnected
-            ? await getAgentJson(`/api/device-details/${encodeURIComponent(deviceId)}`)
-            : await getJson(`/api/device-details/${encodeURIComponent(deviceId)}`);
+        const data = await getAgentJson(`/device-details/${encodeURIComponent(deviceId)}`);
         const details = data.details || {};
         const values = {
             'detail-device-id': deviceId,
@@ -125,7 +137,8 @@ async function fetchDeviceDetails(deviceId) {
             'detail-patch': details.security_patch || 'Unknown',
             'detail-product': details.product || 'Unknown',
             'detail-fingerprint': details.fingerprint || 'Unknown',
-            'detail-shortid': selectedShortId || 'Not found'
+            'detail-shortid': selectedShortId || 'Not found',
+            'detail-network': data.network?.network || data.network?.reason || 'Local ADB'
         };
         document.getElementById('deviceDetails').style.display = 'block';
         Object.entries(values).forEach(([id, value]) => setText(id, value));
@@ -138,7 +151,6 @@ async function loadTests() {
     try {
         const data = await getJson('/api/test-commands');
         const select = document.getElementById('testSelect');
-        if (!select) return;
         select.innerHTML = '<option value="">-- Select a test --</option>';
         data.tests.forEach(test => {
             const option = document.createElement('option');
@@ -147,10 +159,7 @@ async function loadTests() {
             option.dataset.isManual = test.is_manual ? 'true' : 'false';
             select.appendChild(option);
         });
-        select.onchange = () => {
-            if (!select.value) document.getElementById('instructionsBox').className = 'instructions-box';
-            else showInstructions();
-        };
+        select.onchange = () => select.value ? showInstructions() : document.getElementById('instructionsBox').className = 'instructions-box';
     } catch (error) { console.error('Error loading tests:', error); }
 }
 
@@ -165,133 +174,77 @@ async function showInstructions() {
         if (Number(data.wait_time) > 0) content += `<p><strong>⏱️ Wait Time:</strong> ${escapeHtml(String(data.wait_time))} seconds</p>`;
         content += `<pre style="margin-top:10px;">${escapeHtml(data.instruction || 'Follow on-screen instructions.')}</pre>`;
         document.getElementById('instruction-content').innerHTML = content;
-    } catch (error) {
-        console.error('Error loading instructions:', error);
-        alert('Error loading instructions: ' + error.message);
-    }
+    } catch (error) { alert('Error loading instructions: ' + error.message); }
 }
 
 async function runTest() {
     const select = document.getElementById('testSelect');
     const testName = select?.value;
     if (!testName) return alert('Please select a test');
-    if (!selectedDevice) return alert('Please select a device');
-    if (!selectedShortId || selectedShortId === 'Not found') return alert('Selected device does not have a short ID. Discover devices again.');
+    if (!selectedDevice || !selectedShortId) return alert('Please select a DUT with a valid Short ID');
     const option = select.options[select.selectedIndex];
     if (option?.dataset.isManual === 'true' && !confirm('⚠️ This test requires user interaction on the device. Continue?')) return;
     try {
-        const endpoint = agentConnected ? `${agentBaseUrl}/api/run-test` : '/api/run-test';
-        const data = await getJson(endpoint, {
-            method: 'POST', headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({test_name: testName, device_id: selectedDevice, short_id: selectedShortId})
-        });
+        const data = await getAgentJson('/run-test', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({test_name:testName, device_id:selectedDevice, short_id:selectedShortId})});
         currentSessionId = data.session_id;
         lastLogSeq = 0;
         document.getElementById('logs').innerHTML = '';
         const status = document.getElementById('testStatus');
         status.className = 'test-status running';
         status.innerHTML = `▶️ Running test: <strong>${escapeHtml(testName)}</strong> <span class="spinner">⏳</span>`;
-        addLog('🚀 Test started: ' + testName, 'info');
-        addLog(`📱 Device: ${selectedDevice} (Short ID: ${selectedShortId})`, 'info');
+        addLog(`🚀 Test started: ${testName}`, 'info');
+        addLog(`📱 DUT: ${selectedDevice} (Short ID: ${selectedShortId})`, 'info');
         if (logInterval) clearInterval(logInterval);
         await pollLogs();
         logInterval = setInterval(pollLogs, 2000);
-    } catch (error) {
-        console.error('Error starting test:', error);
-        alert('Failed to start test: ' + error.message);
-    }
+    } catch (error) { alert('Failed to start test: ' + error.message); }
 }
 
 async function pollLogs() {
     if (!currentSessionId) return;
     try {
-        const endpoint = agentConnected
-            ? `${agentBaseUrl}/api/test-status/${encodeURIComponent(currentSessionId)}`
-            : `/api/test-status/${encodeURIComponent(currentSessionId)}`;
-        const data = await getJson(endpoint);
+        const data = await getAgentJson(`/test-status/${encodeURIComponent(currentSessionId)}`);
         if (Array.isArray(data.logs)) {
             data.logs.filter(log => Number(log.seq || 0) > lastLogSeq).forEach(log => addLog(log.message || '', 'info', log.time || null));
             lastLogSeq = data.logs.reduce((max, log) => Math.max(max, Number(log.seq || 0)), lastLogSeq);
         }
-        if (data.is_suite && data.results) updateSuiteStatus(data);
         if (data.status === 'completed' || data.status === 'failed') {
             if (logInterval) clearInterval(logInterval);
             logInterval = null;
             const status = document.getElementById('testStatus');
             status.className = `test-status ${data.status}`;
             status.innerHTML = `${data.status === 'completed' ? '✅' : '❌'} Test ${data.status}: ${escapeHtml(data.result || 'Done')}`;
-            addLog(`📊 Test ${data.status} with result: ${data.result || 'N/A'}`, data.result === 'PASSED' ? 'success' : 'error');
+            addLog(`📊 Test ${data.status}: ${data.result || 'N/A'}`, data.result === 'PASSED' ? 'success' : 'error');
         }
     } catch (error) { console.error('Test status polling failed:', error); }
 }
 
-function updateSuiteStatus(data) {
-    const results = data.results || {};
-    const total = Object.keys(results).length;
-    if (data.status === 'running' && total > 0) {
-        const passed = Object.values(results).filter(x => x === 'PASSED').length;
-        document.getElementById('testStatus').innerHTML = `▶️ Test suite running: ${total} completed, ${passed} passed <span class="spinner">⏳</span>`;
-    }
-}
-
-async function runSuite() {
-    if (!selectedDevice || !selectedShortId) return alert('Please select a device with a valid Short ID');
-    const names = Array.from(document.querySelectorAll('#testSelect option:checked')).map(o => o.value).filter(Boolean);
-    if (!names.length) return alert('Select tests before running a suite');
-    try {
-        const endpoint = agentConnected ? `${agentBaseUrl}/api/run-suite` : '/api/run-suite';
-        const data = await getJson(endpoint, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({test_names:names, device_id:selectedDevice, short_id:selectedShortId})});
-        currentSessionId = data.session_id;
-        lastLogSeq = 0;
-        if (logInterval) clearInterval(logInterval);
-        document.getElementById('logs').innerHTML = '';
-        await pollLogs();
-        logInterval = setInterval(pollLogs, 2000);
-    } catch (error) { alert('Failed to start suite: ' + error.message); }
-}
-
-function addLog(message, type = 'info', time = null) {
+function addLog(message, type='info', time=null) {
     const logDiv = document.getElementById('logs');
-    if (!logDiv) return;
     const entry = document.createElement('div');
     entry.className = `log-entry ${type}`;
-    if (time) {
-        const stamp = document.createElement('span');
-        stamp.className = 'log-time';
-        stamp.textContent = `[${time}]`;
-        entry.appendChild(stamp);
-    }
+    if (time) { const stamp = document.createElement('span'); stamp.className='log-time'; stamp.textContent=`[${time}]`; entry.appendChild(stamp); }
     entry.appendChild(document.createTextNode(` ${message}`));
     logDiv.appendChild(entry);
     logDiv.scrollTop = logDiv.scrollHeight;
 }
 
-function clearLogs() {
-    const logs = document.getElementById('logs');
-    if (logs) logs.innerHTML = '<div style="color:#7f8c8d;">Logs cleared...</div>';
-    lastLogSeq = 0;
-}
+function clearLogs() { document.getElementById('logs').innerHTML='<div style="color:#7f8c8d;">Logs cleared...</div>'; lastLogSeq=0; }
 
 async function loadResults() {
     try {
         const data = await getJson('/api/test-results');
         const display = document.getElementById('resultsDisplay');
-        display.style.display = 'block';
+        display.style.display='block';
         display.textContent = typeof data.results === 'string' ? data.results : JSON.stringify(data.results, null, 2);
-    } catch (error) {
-        console.error('Error loading results:', error);
-        alert('Error loading results: ' + error.message);
-    }
+    } catch (error) { alert('Error loading results: ' + error.message); }
 }
 
-function setText(id, value) {
-    const element = document.getElementById(id);
-    if (element) element.textContent = value;
-}
+function setText(id, value) { const element=document.getElementById(id); if (element) element.textContent=value; }
+function escapeHtml(value) { if (value===null || value===undefined) return ''; return String(value).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#039;'); }
 
-function escapeHtml(value) {
-    if (value === null || value === undefined) return '';
-    return String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#039;');
-}
-
-document.addEventListener('DOMContentLoaded', () => { checkEnvironment(); loadTests(); });
+document.addEventListener('DOMContentLoaded', () => {
+    loadSavedAgentToken();
+    loadTests();
+    checkEnvironment();
+});
